@@ -73,6 +73,12 @@ export function isReply(r: number[], cmd: number, offset: number, len: number): 
   return r[0] === 0xaa && r[1] === cmd && r[5] === (offset & 0xff) && r[6] === ((offset >> 8) & 0xff) && r[4] <= len;
 }
 
+// Key travel report (input report 0xA0, sent while debug mode is on): the key's factory entry, its travel
+// ((byte 7 << 8) | byte 6) and its calibration state.
+export interface TravelReport { entry: [number, number, number]; travel: number; state: number }
+export const parseTravel = (r: number[]): TravelReport | null =>
+  r[0] === 0xa0 ? { entry: [r[1], r[2], r[3]], travel: (r[7] << 8) | r[6], state: r[10] } : null;
+
 export interface Info { firmware: string; buildDate: string; reportRateBoost: boolean }
 
 export function parseInfo(d: number[]): Info {
@@ -244,6 +250,7 @@ export interface Performance {
   tachyon: boolean;
   stability: boolean; // anti-mistouch
   adaptiveCalibration: boolean; // the SDK's travelCheck
+  debug: boolean; // live key-travel reports (0xA0) while set
   debounce: number;
 }
 
@@ -256,6 +263,7 @@ export function parsePerformance(e: number[]): Performance {
     tachyon: (e[7] & 1) === 1,
     stability: ((e[7] >> 1) & 1) === 1,
     adaptiveCalibration: ((e[7] >> 2) & 1) === 1,
+    debug: ((e[7] >> 3) & 1) === 1,
     debounce: (e[7] >> 5) & 7,
   };
 }
@@ -272,6 +280,7 @@ export function applyPerformance(block: number[], p: Partial<Performance>): numb
   bit(7, 0, p.tachyon);
   bit(7, 1, p.stability);
   bit(7, 2, p.adaptiveCalibration);
+  bit(7, 3, p.debug);
   if (p.debounce != null) e[7] = (e[7] & ~0xe0) | ((p.debounce & 7) << 5);
   return e;
 }

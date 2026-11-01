@@ -511,3 +511,15 @@ html.dark .overlay { background: rgba(0,0,0,.55); }
 /* dead zone popover sits over the keyboard without dimming the page */
 .overlay.clear { background: transparent; align-items: start; padding-top: 150px; }
 .dz-pop .dialog-head { margin-right: 0; }
+
+/* live key travel (Trigger tab, Preview display): each key fills from the bottom */
+.kbd .key { --travel: 0%; background-image: linear-gradient(to top, var(--accent-soft) var(--travel), transparent var(--travel)); }
+.kbd .key.down { border-color: var(--accent-line); }
+
+/* SOCD trigger condition */
+.socd-card { display: grid; gap: 6px; padding: 12px; border-radius: 8px; background: var(--btn-secondary-bg); }
+.socd-card > small { color: var(--text-secondary); font-size: 12px; margin-bottom: 4px; }
+.socd-opt { display: grid; grid-template-columns: 18px 1fr; gap: 2px 8px; align-items: center; padding: 8px; border: 1px solid transparent; border-radius: 6px; background: var(--bg-card); text-align: left; font-size: 13px; }
+.socd-opt small { grid-column: 2; color: var(--text-secondary); font-size: 12px; }
+.socd-opt.on { border-color: var(--accent-line); }
+.test-box div { line-height: 18px; }

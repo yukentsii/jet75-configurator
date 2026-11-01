@@ -29,6 +29,36 @@ export class Jet75 {
     return run;
   }
 
+  // Travel reports arrive between replies; they go to this listener.
+  onTravel: ((r: P.TravelReport) => void) | null = null;
+  private pumping = false;
+
+  private route(r: number[]) {
+    const t = P.parseTravel(r);
+    if (t) this.onTravel?.(t);
+  }
+
+  // While travel reports are wanted, reads input reports in short slots between commands.
+  startPump() {
+    if (this.pumping) return;
+    this.pumping = true;
+    const tick = () => {
+      if (!this.pumping) return;
+      this.exec(async () => {
+        for (let i = 0; i < 8; i++) {
+          const buf = await this.hid.read(5);
+          if (!buf || !buf.length) break;
+          this.route(Array.from(buf));
+        }
+      }).finally(() => setTimeout(tick, 10));
+    };
+    tick();
+  }
+
+  stopPump() {
+    this.pumping = false;
+  }
+
   private async transact(cmd: number, offset: number, len: number, data?: number[]): Promise<number[]> {
     const pkt = P.frame(cmd, offset, len, data);
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -41,6 +71,7 @@ export class Jet75 {
         if (!buf || buf.length === 0) break;
         const r = Array.from(buf);
         if (P.isReply(r, cmd, offset, len)) return r.slice(8, 8 + r[4]);
+        this.route(r);
       }
     }
     throw new Error(`no reply to command 0x${cmd.toString(16)} at offset ${offset}`);

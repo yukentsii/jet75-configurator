@@ -28,7 +28,7 @@ type KeyRef = [number, number, number];
 interface MtSlot { tap: KeyRef; hold: KeyRef }
 interface DksSlot { points: number[]; keys: { key: KeyRef; phases: number }[] }
 interface Advanced { dks: DksSlot[]; mt: MtSlot[]; tgl: KeyRef[] }
-type AdvKind = 'rs' | 'mt' | 'tgl' | 'dks';
+type AdvKind = 'rs' | 'socd' | 'mt' | 'tgl' | 'dks';
 interface Preset { id: number; name: string; help: string }
 interface LightStore { schemes: { id: string; name: string; colors: string[] }[]; gifs: { id: string; name: string; frames: string[][]; delays: number[] }[] }
 declare const jet75: Record<string, (...args: unknown[]) => Promise<Result<any>>>;
@@ -181,6 +181,8 @@ const state = {
   advKey: -1,
   rsKey2: -1,
   rsPick: 1 as 1 | 2, // which RS key the next keyboard click sets
+  socdMode: -1, // SOCD trigger condition being edited, -1 until loaded
+  travel: [] as number[], // live key travel per matrix index
   presets: [] as Preset[],
   names: [] as string[],
   custom: [] as CustomItem[],
@@ -257,6 +259,7 @@ function keyName(k: KeyEntry): string {
   if (f) return f[2] ?? f[1];
   if (k.type === 0xf0) return 'Fn';
   if (k.type === 0x93) return `RS${Math.floor(k.code1 / 2) + 1}`;
+  if (k.type === 0x94) return `SOCD${Math.floor(k.code1 / 2) + 1}`;
   if (k.type === 0x70) return `M${k.code1 + 1}`;
   if (k.type === 0x90) return `DKS${k.code1 + 1}`;
   if (k.type === 0x91) return `TGL${k.code1 + 1}`;
@@ -288,6 +291,9 @@ function paintRange(r: HTMLInputElement) {
 // tabs
 
 function setTab(tab: string) {
+  const wasLive = state.tab === 'trigger' || state.tab === 'advanced';
+  const live = tab === 'trigger' || tab === 'advanced';
+  if (live !== wasLive && state.lighting) setTravel(live);
   state.tab = tab;
   document.querySelectorAll<HTMLButtonElement>('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
   document.querySelectorAll<HTMLElement>('[data-panel]').forEach((p) => (p.hidden = p.dataset.panel !== tab));
@@ -339,6 +345,7 @@ function renderKeyboard() {
       b.textContent = capLabel(def);
     }
     if (trig && state.trigView !== 'preview' && state.triggers[i]) b.append(el('span', 'v', triggerLabel(state.triggers[i])));
+    if (trig && state.trigView === 'preview') b.append(el('span', 'v travel-v'));
     if (colours?.[i]) {
       b.style.background = colours[i];
       b.style.color = luminance(colours[i]) > 0.55 ? '#111' : '#f4ebd7';
@@ -1615,6 +1622,7 @@ function initTriggerControls() {
     state.trigView = b.dataset.view!;
     renderKeyboard();
     renderTriggerPanel();
+    paintTravel();
   }));
   document.querySelectorAll<HTMLButtonElement>('#trig-select button').forEach((b) => (b.onclick = () => {
     const all = LAYOUT.map((_, i) => i);
@@ -1807,15 +1815,18 @@ async function saveMacro(actions: MacroAction[]) {
 
 // advanced keys: RS, mod-tap, toggle and dynamic keystroke, bound on layer 1
 
-const ADV_TYPE: Record<AdvKind, number> = { dks: 0x90, tgl: 0x91, mt: 0x92, rs: 0x93 };
+const ADV_TYPE: Record<AdvKind, number> = { dks: 0x90, tgl: 0x91, mt: 0x92, rs: 0x93, socd: 0x94 };
 const ADV_INFO: Record<AdvKind, [string, string, string]> = {
   rs: ['i-rs', 'RS', 'Deeper press takes priority'],
+  socd: ['i-socd', 'SOCD', 'Inputs triggered based on rules'],
   dks: ['i-dks', 'Dynamic Key Press (DKS)', 'One key can perform 4 functions based on different press depths.'],
   mt: ['i-mt', 'Hold/Tap (MT)', 'One key achieves 2 functions: Hold for one, Tap for another.'],
   tgl: ['i-tgl', 'Toggle switch (TGL)', 'Click once to toggle hold, click again to release'],
 };
 // the vendor's order
-const ADV_ORDER: AdvKind[] = ['rs', 'dks', 'mt', 'tgl'];
+const ADV_ORDER: AdvKind[] = ['rs', 'socd', 'dks', 'mt', 'tgl'];
+// RS and SOCD bind two keys and use two MT slots in a row
+const isPair = (k?: AdvKind) => k === 'rs' || k === 'socd';
 const ADV_LIMIT = 40;
 const kindOf = (e?: KeyEntry) => ADV_ORDER.find((k) => e && e.type === ADV_TYPE[k]);
 
@@ -1852,17 +1863,17 @@ function formRow(label: string, ...controls: HTMLElement[]) {
 
 // Slots a kind already uses. RS pairs live in the MT slots, one slot per key of the pair.
 function usedSlots(kind: AdvKind): Set<number> {
-  const kinds = kind === 'mt' || kind === 'rs' ? ['mt', 'rs'] : [kind];
+  const kinds = kind === 'mt' || isPair(kind) ? ['mt', 'rs', 'socd'] : [kind];
   return new Set(state.base.filter((b) => kinds.includes(kindOf(b) ?? '')).map((b) => b.code1));
 }
 
 // The slot a key uses: its own if it is already bound to this kind, otherwise the first slot no key uses.
 function slotFor(kind: AdvKind, key: number): number {
   const e = state.base[key];
-  if (kindOf(e) === kind) return kind === 'rs' ? e.code1 & ~1 : e.code1;
+  if (kindOf(e) === kind) return isPair(kind) ? e.code1 & ~1 : e.code1;
   const used = usedSlots(kind);
   // RS takes two slots in a row, s for key 1 and s + 1 for key 2
-  const step = kind === 'rs' ? 2 : 1;
+  const step = isPair(kind) ? 2 : 1;
   for (let s = 0; s + step <= 32; s += step) if (!used.has(s) && (step === 1 || !used.has(s + 1))) return s;
   return -1;
 }
@@ -1875,16 +1886,17 @@ function rsPair(i: number): [number, number] {
 
 function selectAdvKey(i: number) {
   const k = kindOf(state.base[i]);
-  if (state.advKind === 'rs' && !k && state.advKey >= 0 && state.rsPick === 1 && state.rsKey2 >= 0) {
+  if (isPair(state.advKind) && !k && state.advKey >= 0 && state.rsPick === 1 && state.rsKey2 >= 0) {
     // Bind Key1 was chosen again: replace key 1, keep key 2
     if (i !== state.rsKey2) state.advKey = i;
     state.rsPick = 2;
-  } else if (state.advKind === 'rs' && !k && state.advKey >= 0 && state.rsPick === 2) {
+  } else if (isPair(state.advKind) && !k && state.advKey >= 0 && state.rsPick === 2) {
     // second click while editing RS picks key 2
     if (i !== state.advKey) state.rsKey2 = i;
     state.rsPick = 1;
-  } else if (k === 'rs') {
-    state.advKind = 'rs';
+  } else if (isPair(k)) {
+    state.advKind = k!;
+    state.socdMode = -1;
     [state.advKey, state.rsKey2] = rsPair(i);
   } else {
     state.advKey = state.advKey === i ? -1 : i;
@@ -1902,18 +1914,18 @@ function renderAdvanced() {
     const b = el('button', 'adv-kind' + (k === state.advKind ? ' on' : '')) as HTMLButtonElement;
     b.dataset.kind = k;
     b.append(icon(ic), el('b', '', title), el('small', '', desc));
-    b.onclick = () => { state.advKind = k; state.advKey = -1; state.rsKey2 = -1; renderKeyboard(); renderAdvanced(); };
+    b.onclick = () => { state.advKind = k; state.advKey = -1; state.rsKey2 = -1; state.socdMode = -1; renderKeyboard(); renderAdvanced(); };
     return b;
   }));
 
   // an RS pair counts once, listed on its key 1
   const bound = state.base.map((e, i) => ({ e, i, k: kindOf(e) }))
-    .filter((b) => b.k && b.i < LAYOUT.length && !(b.k === 'rs' && b.e.code1 % 2 === 1));
+    .filter((b) => b.k && b.i < LAYOUT.length && !(isPair(b.k) && b.e.code1 % 2 === 1));
   $('adv-count').textContent = `${bound.length}/${ADV_LIMIT}`;
   $('adv-list').replaceChildren(...bound.map(({ e, i, k }) => {
     const row = el('div', 'adv-item');
-    const what = k === 'rs' ? `${capLabel(LAYOUT[i][3])} + ${capLabel(LAYOUT[e.code2]?.[3] ?? 0)}` : `${capLabel(LAYOUT[i][3])} · #${i}`;
-    const n = k === 'rs' ? e.code1 / 2 + 1 : e.code1 + 1;
+    const what = isPair(k) ? `${capLabel(LAYOUT[i][3])} + ${capLabel(LAYOUT[e.code2]?.[3] ?? 0)}` : `${capLabel(LAYOUT[i][3])} · #${i}`;
+    const n = isPair(k) ? e.code1 / 2 + 1 : e.code1 + 1;
     row.append(el('b', '', `${k!.toUpperCase()}${n}`), el('span', 'n', what));
     const edit = el('button', '', 'Edit');
     edit.onclick = () => selectAdvKey(i);
@@ -1925,8 +1937,8 @@ function renderAdvanced() {
 
 function renderTestBoxes() {
   if ($('test-press')) {
-    $('test-press').textContent = state.testPress.join('  ');
-    $('test-release').textContent = state.testRelease.join('  ');
+    $('test-press').replaceChildren(...state.testPress.map((t) => el('div', '', t)));
+    $('test-release').replaceChildren(...state.testRelease.map((t) => el('div', '', t)));
   }
 }
 
@@ -1946,12 +1958,12 @@ function renderAdvEditor() {
     return;
   }
   $('adv-title').textContent = ADV_INFO[kind][1];
-  const boundKinds = state.base.filter((e, i) => kindOf(e) && i < LAYOUT.length && !(kindOf(e) === 'rs' && e.code1 % 2)).length;
+  const boundKinds = state.base.filter((e, i) => kindOf(e) && i < LAYOUT.length && !(isPair(kindOf(e)) && e.code1 % 2)).length;
   if (!kindOf(state.base[key]) && boundKinds >= ADV_LIMIT) {
     ed.replaceChildren(el('div', 'empty-txt', `All ${ADV_LIMIT} bindings are in use. Unbind one first.`));
     return;
   }
-  if (kind === 'rs') { renderRsEditor(ed); return; }
+  if (isPair(kind)) { renderPairEditor(ed, kind); return; }
   const slot = slotFor(kind, key);
   if (slot < 0) {
     ed.replaceChildren(el('div', 'empty-txt', `All 32 ${kind.toUpperCase()} slots are in use.`));
@@ -2034,31 +2046,54 @@ function dksFromEditor(): DksSlot {
   };
 }
 
-// RS: pick key 1 and key 2 on the keyboard; the deeper-pressed of the two wins.
-function renderRsEditor(ed: HTMLElement) {
+// RS and SOCD: pick key 1 and key 2 on the keyboard. RS sends the deeper-pressed key; SOCD follows its trigger condition.
+const SOCD_MODES: [string, string][] = [
+  ['Last Input Priority', 'The last activated key overrides the previous key'],
+  ['Absolute Priority(Key1)', 'Key 1 always takes priority over Key 2'],
+  ['Absolute Priority (Key 2)', 'Key 2 always takes priority over Key 1'],
+  ['Cancel Mode', 'When both keys are pressed, neither will trigger'],
+];
+// key 2 stores the mirror of key 1's priority
+const mirror = (p: number) => (p === 1 ? 2 : p === 2 ? 1 : p);
+
+function renderPairEditor(ed: HTMLElement, kind: AdvKind) {
   const k1 = state.advKey;
   const k2 = state.rsKey2;
   const pick = (n: 1 | 2, key: number) => {
     const b = el('button', 'outline-btn rs-pick' + (state.rsPick === n ? ' on' : '')) as HTMLButtonElement;
     b.id = `rs-key${n}`;
-    b.append(`Bind Key${n}: `, el('b', '', key >= 0 ? capLabel(LAYOUT[key][3]) : 'click a key'));
+    b.append(`Bind Key${n === 1 ? ' 1' : '2'}: `, el('b', '', key >= 0 ? capLabel(LAYOUT[key][3]) : 'click a key'));
     b.onclick = () => { state.rsPick = n; renderAdvEditor(); };
     return b;
   };
   const parts: HTMLElement[] = [
-    el('div', 'empty-txt', 'Press either key: the one pressed deeper is sent. Click a Bind button, then a key on the keyboard.'),
+    el('div', 'empty-txt', kind === 'rs' ? 'Press either key: the one pressed deeper is sent. Click a Bind button, then a key on the keyboard.'
+      : 'Click a Bind button, then a key on the keyboard.'),
     pick(1, k1), pick(2, k2),
   ];
+  if (kind === 'socd') {
+    if (state.socdMode < 0) state.socdMode = k1 >= 0 && kindOf(state.base[k1]) === 'socd' ? state.triggers[k1]?.priority ?? 0 : 0;
+    const card = el('div', 'socd-card');
+    card.append(el('b', '', 'Trigger Condition'), el('small', '', 'Choose an action when two keys are pressed'),
+      ...SOCD_MODES.map(([title, text], m) => {
+        const b = el('button', 'socd-opt' + (m === state.socdMode ? ' on' : '')) as HTMLButtonElement;
+        b.dataset.mode = String(m);
+        b.append(el('span', 'radio' + (m === state.socdMode ? ' on' : '')), el('span', '', title), el('small', '', text));
+        b.onclick = () => { state.socdMode = m; renderAdvEditor(); };
+        return b;
+      }));
+    parts.push(card);
+  }
   const actions = el('div', 'actions');
   const save = el('button', 'primary-btn', 'Save and bind') as HTMLButtonElement;
   save.id = 'adv-save';
   save.disabled = !state.writes.keymap || k1 < 0 || k2 < 0;
-  save.onclick = () => saveRs(k1, k2);
+  save.onclick = () => savePair(kind, k1, k2);
   actions.append(save);
-  if (kindOf(state.base[k1]) === 'rs') {
-    const unbind = el('button', 'white-btn', 'Unbind') as HTMLButtonElement;
+  if (isPair(kindOf(state.base[k1]))) {
+    const unbind = el('button', 'white-btn', 'Delete') as HTMLButtonElement;
     unbind.id = 'adv-unbind';
-    unbind.onclick = async () => { await unbindAdvanced(k1, false); await unbindAdvanced(k2); };
+    unbind.onclick = () => deletePair(k1, k2);
     actions.append(unbind);
   }
   parts.push(actions);
@@ -2068,18 +2103,40 @@ function renderRsEditor(ed: HTMLElement) {
 // The entry a key sends by default: its factory function on layer 1.
 const defaultEntry = (key: number): KeyRef => (LAYOUT[key][3] === 0xff ? [0xf0, 0xff, 0x09] : toRef(LAYOUT[key][3]));
 
-async function saveRs(k1: number, k2: number) {
-  const s = slotFor('rs', k1);
-  if (s < 0) { toast('No free slots for RS'); return; }
+async function savePair(kind: AdvKind, k1: number, k2: number) {
+  const s = slotFor(kind, k1);
+  if (s < 0) { toast(`No free slots for ${kind.toUpperCase()}`); return; }
   const a = state.adv!;
   const slots = a.mt.map((m, i) => (i === s ? { tap: defaultEntry(k1), hold: defaultEntry(k2) }
     : i === s + 1 ? { tap: defaultEntry(k2), hold: defaultEntry(k1) } : m));
   const next = await call<Advanced>('setAdvanced', state.profile, 'mt', slots);
   if (!next) return;
   state.adv = next;
-  if ((await call('setKeyEntry', state.profile, 0, k1, [0x93, s, k2])) === null) return;
-  if ((await call('setKeyEntry', state.profile, 0, k2, [0x93, s + 1, k1])) === null) return;
-  toast(`RS${s / 2 + 1}: ${capLabel(LAYOUT[k1][3])} + ${capLabel(LAYOUT[k2][3])}`);
+  const type = ADV_TYPE[kind];
+  if ((await call('setKeyEntry', state.profile, 0, k1, [type, s, k2])) === null) return;
+  if ((await call('setKeyEntry', state.profile, 0, k2, [type, s + 1, k1])) === null) return;
+  if (kind === 'socd') {
+    // the trigger condition is the priority nibble of both keys' trigger records
+    await call('setTriggers', state.profile, [k1], { priority: state.socdMode });
+    const t = await call<Trigger[]>('setTriggers', state.profile, [k2], { priority: mirror(state.socdMode) });
+    if (t) state.triggers = t;
+  }
+  toast(`${kind.toUpperCase()}${s / 2 + 1}: ${capLabel(LAYOUT[k1][3])} + ${capLabel(LAYOUT[k2][3])}`);
+  await reloadBase();
+}
+
+// Deleting a pair frees both MT slots, puts both keys back and clears their priority.
+async function deletePair(k1: number, k2: number) {
+  const s = state.base[k1].code1 & ~1;
+  const empty: MtSlot = { tap: [0, 0, 0], hold: [0, 0, 0] };
+  const next = await call<Advanced>('setAdvanced', state.profile, 'mt', state.adv!.mt.map((m, i) => (i === s || i === s + 1 ? empty : m)));
+  if (next) state.adv = next;
+  await unbindAdvanced(k1, false);
+  await unbindAdvanced(k2, false);
+  const t = await call<Trigger[]>('setTriggers', state.profile, [k1, k2], { priority: 0 });
+  if (t) state.triggers = t;
+  state.advKey = -1;
+  state.rsKey2 = -1;
   await reloadBase();
 }
 
@@ -2116,12 +2173,65 @@ async function reloadBase() {
   renderAdvanced();
 }
 
+// live key travel: debug mode makes the keyboard report every key's travel (0xA0 reports)
+
+// travel reports name the key by its factory entry; map that back to the matrix index
+const ENTRY_INDEX = new Map<string, number>(LAYOUT.map((_, i) => [(LAYOUT[i][3] === 0xff ? [0xf0, 0xff, 0x09] : toRef(LAYOUT[i][3])).join(), i]));
+const TRAVEL_FULL = 340; // 3.40 mm, the deepest point the vendor shows
+
+async function setTravel(on: boolean) {
+  await call('setTravel', on);
+  if (!on) { state.travel = []; paintTravel(); }
+}
+
+let travelFrame = 0;
+function onTravel(r: { entry: number[]; travel: number; state: number }) {
+  const i = ENTRY_INDEX.get(r.entry.join());
+  if (i == null) return;
+  state.travel[i] = r.travel;
+  dksTest(i, r.travel);
+  if (!travelFrame) travelFrame = requestAnimationFrame(() => { travelFrame = 0; paintTravel(); });
+}
+
+// Fills each key from the bottom with its travel; only in the Trigger tab's Preview display.
+function paintTravel() {
+  if (state.tab !== 'trigger' || state.trigView !== 'preview') return;
+  document.querySelectorAll<HTMLElement>('#kbd .key').forEach((k) => {
+    const t = state.travel[Number(k.dataset.index)] ?? 0;
+    k.style.setProperty('--travel', `${Math.min(100, (t / TRAVEL_FULL) * 100)}%`);
+    k.classList.toggle('down', t > 10);
+    const v = k.querySelector('.travel-v');
+    if (v) v.textContent = mm(Math.min(t, TRAVEL_FULL));
+  });
+}
+
+// Test Your Binding: DKS keys report the vendor's four stages from their travel
+const DKS_WORDS = ['Key Pressed', 'Button bottoming out', 'Lift Upon Bottoming Out', 'Fully Lifted'];
+const dksStage: Record<number, { stage: number; max: number }> = {};
+function dksTest(i: number, travel: number) {
+  if (state.tab !== 'advanced' || kindOf(state.base[i]) !== 'dks') return;
+  const st = (dksStage[i] ??= { stage: 3, max: 0 });
+  const name = capLabel(LAYOUT[i][3]);
+  let next = st.stage;
+  if (travel <= 10) next = 3;
+  else if (st.stage === 3 && travel > 10) next = 0;
+  else if (st.stage === 0 && travel >= TRAVEL_FULL - 40) next = 1;
+  else if (st.stage === 1 && travel < st.max - 30) next = 2;
+  st.max = next === 1 ? Math.max(st.max, travel) : next === 3 ? 0 : st.max;
+  if (next === st.stage) return;
+  st.stage = next;
+  const line = `${name}: ${DKS_WORDS[next]}`;
+  if (next < 2) state.testPress = [...state.testPress, line].slice(-8);
+  else state.testRelease = [...state.testRelease, line].slice(-8);
+  renderTestBoxes();
+}
+
 // keyboard capture for remapping, the macro recorder and the binding test
 
 window.addEventListener('keydown', (e) => {
   if (state.recording) { e.preventDefault(); recordEvent(e, true); return; }
   if (state.tab === 'advanced' && !e.repeat) {
-    state.testPress = [...state.testPress, HID_NAMES[CODE_TO_HID[e.code]] ?? e.code].slice(-12);
+    state.testPress = [...state.testPress, `Key Pressed: ${HID_NAMES[CODE_TO_HID[e.code]] ?? e.code}`].slice(-8);
     renderTestBoxes();
   }
   if (state.tab === 'keys' && state.selected >= 0 && !(e.target instanceof HTMLInputElement)) {
@@ -2132,7 +2242,7 @@ window.addEventListener('keydown', (e) => {
 window.addEventListener('keyup', (e) => {
   if (state.recording) { e.preventDefault(); recordEvent(e, false); }
   if (state.tab === 'advanced') {
-    state.testRelease = [...state.testRelease, HID_NAMES[CODE_TO_HID[e.code]] ?? e.code].slice(-12);
+    state.testRelease = [...state.testRelease, `Key Released: ${HID_NAMES[CODE_TO_HID[e.code]] ?? e.code}`].slice(-8);
     renderTestBoxes();
   }
 });
@@ -2205,6 +2315,7 @@ function initTheme() {
 
 initTheme();
 initLightingControls();
+(jet75.onTravel as unknown as (fn: typeof onTravel) => void)(onTravel);
 initCustomLighting();
 initPerformanceControls();
 initTriggerControls();

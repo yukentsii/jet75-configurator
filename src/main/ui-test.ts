@@ -247,6 +247,48 @@ export async function runUiTest(win: BrowserWindow, getDevice: () => Promise<Jet
   await kb.writeRawRegion(0x06, 64 * profile, perfRaw);
   check('trigger #0 and Berserk restored byte-for-byte', same(await kb.rawRegion(0xa0, 1024 * profile, 8), trigRaw0) &&
     same(await kb.funcConfig(profile), perfRaw));
+
+  // debug mode (live key travel) is on while the Trigger tab is open and off after leaving it
+  await click('[data-tab="lighting"]');
+  await wait(800);
+  await click('[data-tab="trigger"]');
+  await wait(1000);
+  const debugOn = (await kb.performance(profile)).debug;
+  await click('[data-tab="lighting"]');
+  await wait(1000);
+  const debugOff = (await kb.performance(profile)).debug;
+  check('ui debug mode on in Trigger tab, off after leaving', debugOn && !debugOff);
+
+  // SOCD: W (#1) + S (#16), Absolute Priority (Key 2), then Delete frees everything
+  const socdMt = await kb.rawRegion(0xa4, 256 * profile, 256);
+  const socdTrig = await kb.rawRegion(0xa0, 1024 * profile, 1024);
+  const [w0, s0] = [(await kb.keymap(profile, 0))[1], (await kb.keymap(profile, 0))[16]];
+  await click('[data-tab="advanced"]');
+  await click('.adv-kind[data-kind="socd"]');
+  await click('#kbd .key[data-index="1"]');
+  await click('#kbd .key[data-index="16"]');
+  await click('.socd-opt[data-mode="2"]');
+  await click('#adv-save');
+  await wait(2500);
+  const [sw, ss] = [(await kb.keymap(profile, 0))[1], (await kb.keymap(profile, 0))[16]];
+  const st = await kb.triggers(profile);
+  check('ui SOCD pair [0x94, s, partner] with priority 2 / mirror 1', sw.type === 0x94 && sw.code2 === 16 && ss.type === 0x94 &&
+    ss.code1 === sw.code1 + 1 && ss.code2 === 1 && st[1].priority === 2 && st[16].priority === 1);
+  await click('#kbd .key[data-index="1"]');
+  await click('#adv-unbind');
+  await wait(2500);
+  const freed = (await kb.advanced(profile)).mt;
+  const st2 = await kb.triggers(profile);
+  check('ui SOCD delete frees both slots and clears priority', freed[sw.code1].tap.join() === '0,0,0' && freed[sw.code1 + 1].tap.join() === '0,0,0' &&
+    st2[1].priority === 0 && st2[16].priority === 0 && (await kb.keymap(profile, 0))[1].type !== 0x94);
+  await kb.setKeyEntry(profile, 0, 1, [w0.type, w0.code1, w0.code2]);
+  await kb.setKeyEntry(profile, 0, 16, [s0.type, s0.code1, s0.code2]);
+  await kb.writeRawRegion(0xa5, 256 * profile, socdMt);
+  await kb.writeRawRegion(0xa1, 1024 * profile, socdTrig);
+  check('SOCD keys, slots and triggers restored byte-for-byte', same(await kb.rawRegion(0xa4, 256 * profile, 256), socdMt) &&
+    same(await kb.rawRegion(0xa0, 1024 * profile, 1024), socdTrig) && (await kb.keymap(profile, 0))[1].code2 === w0.code2);
+  await click('[data-tab="lighting"]');
+  await wait(800);
   // sidebar: rename through the ⋮ menu and dialog, then drag built-in configurations with real mouse input
   const base = await kb.profiles();
   const target = base.order.slice(0, base.count).find((p) => p !== base.active);

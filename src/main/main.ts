@@ -132,6 +132,26 @@ handle('pickGif', async () => {
   return { name: path.basename(r.filePaths[0], path.extname(r.filePaths[0])), bytes: Array.from(await fsp.readFile(r.filePaths[0])) };
 });
 
+// Live key travel (Trigger tab preview, binding test): turns debug mode on/off for the active profile and
+// forwards the 0xA0 reports to the window.
+let travelOn = false;
+async function setTravel(on: boolean) {
+  const d = await device();
+  const profile = (await d.profiles()).active;
+  if (on === travelOn && on === (await d.performance(profile)).debug) return on;
+  travelOn = on;
+  if (on) {
+    d.onTravel = (r) => BrowserWindow.getAllWindows()[0]?.webContents.send('travel', r);
+    d.startPump();
+  } else {
+    d.stopPump();
+    d.onTravel = null;
+  }
+  await d.setPerformance(profile, { debug: on });
+  return on;
+}
+handle('setTravel', async (on: boolean) => setTravel(on));
+
 handle('restoreLayer', async (profile: number, layer: number) => (await device()).restoreLayer(profile, layer));
 handle('setKeyEntry', async (profile: number, layer: number, index: number, entry: number[]) =>
   (await device()).setKeyEntry(profile, layer, index, entry));
@@ -323,6 +343,8 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', async () => {
+  // never leave debug mode on the keyboard
+  if (kb && travelOn) await setTravel(false).catch(() => undefined);
   await kb?.close().catch(() => undefined);
   app.quit();
 });
