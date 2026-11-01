@@ -38,7 +38,7 @@ Everything the official driver offers for the Jet 75 II, with the same layout:
 | **Key Config** | remap any key on 4 layers, key combos, 16 recorded macros |
 | **Advanced key** | Hold/Tap (MT) with hold time, Toggle (TGL), Dynamic Keystroke (DKS) |
 | **Performance** | polling rate 1k / 2k / 4k / 8k Hz, Win key lock, Mac mode, debounce, stability mode, adaptive calibration |
-| **Profiles** | switch between the 4 onboard profiles, rename them (double-click or ⋮), drag or click to apply the 6 built-in configurations (Beginner, FPS, Extreme, Office Work, MOBA Game, FPS Game) |
+| **Profiles** | switch between the 4 onboard profiles, rename or delete them from the ⋮ menu, drag one of the 6 built-in configurations onto a profile to replace it or onto "Drag config here" to add it (Beginner, FPS, Extreme, Office Work, MOBA Game, FPS Game) |
 
 Light and dark themes, with a toggle at the top right.
 

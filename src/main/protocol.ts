@@ -12,6 +12,8 @@ export const KEY_AREA = 512;
 export const LAYERS = 4;
 export const KEY_COUNT = 128;
 export const PROFILES = 4;
+// The official app offers 3 onboard configs on this model ("Onboard config (2/3)").
+export const MAX_ONBOARD = 3;
 
 export const Cmd = {
   getInfo: 0x03,
@@ -25,6 +27,9 @@ export const Cmd = {
   setMacros: 0x0d,
   setBase: 0x0e,
   getCustom: 0xf1,
+  // 0xEE + profile index resets that profile to factory settings; 0xEE + 0xFF resets the whole keyboard.
+  // Verified on hardware by backing everything up, resetting, comparing and restoring.
+  reset: 0xee,
   setCustom: 0xf2,
   getTrigger: 0xa0,
   setTrigger: 0xa1,
@@ -45,7 +50,7 @@ export const READ_CMDS = new Set<number>([
 // Add a command here only after its first write has been verified on the keyboard.
 export const CONFIRMED_WRITES = new Set<number>([
   Cmd.setFuncConfig, Cmd.setKeyMatrix, Cmd.setBase, Cmd.setMacros,
-  Cmd.setTrigger, Cmd.setDks, Cmd.setMt, Cmd.setTgl, Cmd.setCustom,
+  Cmd.setTrigger, Cmd.setDks, Cmd.setMt, Cmd.setTgl, Cmd.setCustom, Cmd.reset,
 ]);
 
 // [0x55, cmd, 0, sum(bytes 4..) & 0xFF, len, offLo, offHi, 0, data...]
@@ -375,6 +380,29 @@ export interface Preset {
   lighting: { effect: number; brightness: number; speed: number; direction: number; customColorDisabled: boolean; color: string };
   performance: Partial<Performance>;
   triggers: Trigger[];
+}
+
+// A whole profile as raw bytes. Used for custom configs (saved in the app) and exported .json files.
+export const SNAPSHOT_FORMAT = 'jet75-profile/1';
+export interface Snapshot {
+  format: string;
+  keys: number[][]; // 4 layers × 384 bytes
+  settings: number[]; // 64
+  triggers: number[]; // 1024
+  dks: number[]; // 768
+  mt: number[]; // 256
+  tgl: number[]; // 128
+}
+
+export function checkSnapshot(s: Snapshot) {
+  const bytes = (a: unknown, n: number) =>
+    Array.isArray(a) && a.length === n && a.every((b) => Number.isInteger(b) && b >= 0 && b <= 255);
+  if (!s || s.format !== SNAPSHOT_FORMAT) throw new Error('not a Jet 75 configuration file');
+  if (!Array.isArray(s.keys) || s.keys.length !== LAYERS || !s.keys.every((l) => bytes(l, 3 * KEY_COUNT)) ||
+    !bytes(s.settings, FUNC_SIZE) || !bytes(s.triggers, TRIGGER_SIZE) || !bytes(s.dks, DKS.size) ||
+    !bytes(s.mt, MT.size) || !bytes(s.tgl, TGL.size)) {
+    throw new Error('the configuration file is damaged or incomplete');
+  }
 }
 
 // Profile names: a JSON array of all names, UTF-8, padded with 0xFF, stored in each profile's custom data

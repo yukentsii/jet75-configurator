@@ -1,7 +1,8 @@
-import { app, BrowserWindow, ipcMain, session } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, session } from 'electron';
 import * as path from 'path';
 import { Jet75 } from './device';
-import { CONFIRMED_WRITES, Cmd, LightingPatch, Macro, Performance, Trigger } from './protocol';
+import { addCustom, cleanName, deleteCustom, getCustom, loadCustom, readConfigFile, renameCustom, writeConfigFile } from './custom';
+import { CONFIRMED_WRITES, Cmd, LightingPatch, Macro, Performance, Snapshot, Trigger } from './protocol';
 import { PRESETS } from './presets';
 import { runUiTest } from './ui-test';
 
@@ -98,6 +99,115 @@ handle('applyPreset', async (profile: number, id: number) => {
   const d = await device();
   await d.applyPreset(profile, await d.buildPreset(def));
   return d.renameProfile(profile, def.name);
+});
+// Drop on "Drag config here": enable a new onboard profile and fill it with the configuration.
+handle('addPresetProfile', async (id: number) => {
+  const def = PRESETS.find((p) => p.id === id);
+  if (!def) throw new Error('unknown preset');
+  const d = await device();
+  const profile = await d.addProfile();
+  await d.applyPreset(profile, await d.buildPreset(def));
+  return { profile, names: await d.renameProfile(profile, def.name), profiles: await d.profiles() };
+});
+// custom configs, Create and Import
+
+const customList = async () => (await loadCustom()).map(({ id, name }) => ({ id, name }));
+
+// Writes a snapshot to the keyboard as a new onboard profile, or keeps it as a custom config.
+async function store(name: string, snapshot: Snapshot, storage: 'custom' | 'onboard') {
+  if (storage === 'custom') {
+    await addCustom(name, snapshot);
+    return { custom: await customList() };
+  }
+  const d = await device();
+  const profile = await d.addProfile();
+  await d.restoreSnapshot(profile, snapshot);
+  const names = await d.renameProfile(profile, cleanName(name));
+  return { profile, names, profiles: await d.profiles() };
+}
+
+handle('customConfigs', customList);
+// source: 'selected' copies the profile shown in the app, a number picks a built-in configuration
+handle('createConfig', async (opts: { name: string; source: 'selected' | number; storage: 'custom' | 'onboard' }) => {
+  const d = await device();
+  const shown = (await d.profiles()).active;
+  let snapshot: Snapshot;
+  if (opts.source === 'selected') snapshot = await d.snapshot(shown);
+  else {
+    const def = PRESETS.find((p) => p.id === opts.source);
+    if (!def) throw new Error('unknown preset');
+    snapshot = await d.presetSnapshot(def, shown);
+  }
+  return store(opts.name, snapshot, opts.storage);
+});
+handle('pickImportFile', async () => {
+  const r = await dialog.showOpenDialog({ title: 'Import configuration', filters: [{ name: 'Jet 75 configuration', extensions: ['json'] }], properties: ['openFile'] });
+  if (r.canceled || !r.filePaths[0]) return null;
+  const { name } = await readConfigFile(r.filePaths[0]);
+  return { path: r.filePaths[0], name };
+});
+handle('importConfig', async (opts: { path: string; name: string; storage: 'custom' | 'onboard' }) => {
+  const { snapshot } = await readConfigFile(opts.path);
+  return store(opts.name, snapshot, opts.storage);
+});
+const saveFile = async (name: string, snapshot: Snapshot) => {
+  const r = await dialog.showSaveDialog({
+    title: 'Export configuration', defaultPath: `${name.replace(/[\\/:*?"<>|]/g, '_') || 'jet75-config'}.json`,
+    filters: [{ name: 'Jet 75 configuration', extensions: ['json'] }],
+  });
+  if (r.canceled || !r.filePath) return false;
+  await writeConfigFile(r.filePath, name, snapshot);
+  return true;
+};
+handle('exportProfile', async (profile: number, name: string) => saveFile(name, await (await device()).snapshot(profile)));
+handle('exportCustom', async (id: string) => {
+  const c = await getCustom(id);
+  return saveFile(c.name, c.snapshot);
+});
+handle('moveToCustom', async (profile: number, name: string) => {
+  await addCustom(name, await (await device()).snapshot(profile));
+  return customList();
+});
+handle('renameCustom', async (id: string, name: string) => { await renameCustom(id, name); return customList(); });
+handle('deleteCustom', async (id: string) => { await deleteCustom(id); return customList(); });
+// drop a custom config on a profile (replace) or on "Drag config here" (new onboard profile)
+handle('applyCustom', async (id: string, profile: number) => {
+  const c = await getCustom(id);
+  const d = await device();
+  await d.restoreSnapshot(profile, c.snapshot);
+  return d.renameProfile(profile, c.name);
+});
+handle('addCustomProfile', async (id: string) => {
+  const c = await getCustom(id);
+  return store(c.name, c.snapshot, 'onboard');
+});
+
+handle('resetProfile', async (profile: number) => {
+  const d = await device();
+  await d.resetProfile(profile);
+  return d.profileNames();
+});
+handle('factoryReset', async () => {
+  await (await device()).factoryReset().catch(() => undefined);
+  await kb?.close().catch(() => undefined);
+  kb = null;
+  // the keyboard re-enumerates after a full reset
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await new Promise((r) => setTimeout(r, 500));
+    try {
+      const d = await device();
+      return { profiles: await d.profiles(), names: await d.profileNames() };
+    } catch {
+      await (kb as Jet75 | null)?.close().catch(() => undefined);
+      kb = null;
+    }
+  }
+  throw new Error('the keyboard did not come back after the reset. reconnect it.');
+});
+
+handle('deleteProfile', async (profile: number) => {
+  const d = await device();
+  return { profiles: await d.deleteProfile(profile), names: await d.profileNames() };
 });
 handle('profileNames', async () => (await device()).profileNames());
 handle('renameProfile', async (profile: number, name: string) => (await device()).renameProfile(profile, name));

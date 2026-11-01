@@ -20,6 +20,7 @@
     <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M9.8 9.6a2.3 2.3 0 1 1 3.3 2.1c-.7.4-1.1.9-1.1 1.7M12 16.4v.1"/></symbol>
     <symbol id="i-chev" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></symbol>
     <symbol id="i-dots" viewBox="0 0 24 24"><path d="M12 6v.1M12 12v.1M12 18v.1"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
     <symbol id="i-code" viewBox="0 0 24 24"><path d="m8 8-4 4 4 4M16 8l4 4-4 4M13.5 6l-3 12"/></symbol>
     <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M9 17h6M10 20h4M12 3v1.5M4.5 6l1 1M19.5 6l-1 1M3 12h1.5M19.5 12H21"/><path d="M8.5 14a5 5 0 1 1 7 0c-.8.7-1 1.3-1 2h-5c0-.7-.2-1.3-1-2z"/></symbol>
     <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 3 5 13.5h6L10 21l8-10.5h-6z"/></symbol>
@@ -74,10 +75,8 @@
   <header class="topbar">
     <span class="home"><svg class="ic"><use href="#i-home"/></svg>Jet 75 Configurator</span>
     <span class="spacer"></span>
-    <!-- where the vendor has account / skin / settings icons and "download client" -->
     <button class="icon-btn" id="connect" title="reconnect the keyboard" aria-label="reconnect"><svg class="ic"><use href="#i-refresh"/></svg></button>
     <button class="icon-btn" id="theme" title="light / dark" aria-label="toggle dark mode"><span class="theme-toggle"><span class="thumb"></span></span></button>
-    <span class="icon-btn" title="settings are on the tabs below" aria-hidden="true"><svg class="ic"><use href="#i-gear"/></svg></span>
     <span class="outline-btn small" id="conn-pill"><svg class="ic"><use href="#i-plug"/></svg><span id="status">Not connected</span><span id="connect-label" hidden></span></span>
   </header>
 
@@ -85,20 +84,17 @@
     <aside class="side">
       <div class="dev-name">Jet 75</div>
       <div class="dev-meta"><span><svg class="ic"><use href="#i-plug"/></svg>Wired</span><span><svg class="ic"><use href="#i-book"/></svg><span class="mono-num" id="fw">FW —</span></span></div>
-      <button class="fill-btn wide" disabled><svg class="ic"><use href="#i-plus"/></svg>Create</button>
-      <div class="pair">
-        <button class="fill-btn" disabled><svg class="ic"><use href="#i-cloud"/></svg>Cloud</button>
-        <button class="fill-btn" disabled><svg class="ic"><use href="#i-import"/></svg>Import</button>
-      </div>
+      <button class="fill-btn wide" id="create-btn"><svg class="ic"><use href="#i-plus"/></svg>Create</button>
+      <button class="fill-btn wide" id="import-btn"><svg class="ic"><use href="#i-import"/></svg>Import</button>
       <div class="side-head">Onboard config <svg class="ic sm"><use href="#i-help"/></svg><span class="muted" id="profile-count"></span><span class="spacer"></span><svg class="ic"><use href="#i-chev"/></svg></div>
       <div class="profiles" id="profiles"></div>
-      <div class="drop">Drag config here</div>
+      <div class="drop" id="onboard-drop">Drag config here</div>
       <div class="presets-block">
-        <div class="chips side-chips"><button disabled title="not available offline">Custom</button><button disabled title="not available offline">Cloud</button><button class="on">Official</button></div>
-        <div class="side-head second">Official configuration</div>
+        <div class="chips side-chips" id="list-tabs"><button data-list="custom">Custom</button><button data-list="official" class="on">Official</button></div>
+        <div class="side-head second" id="list-head">Official configuration</div>
         <div class="side-sub">Drag config above to activate</div>
         <div class="profiles" id="presets"></div>
-        <div class="drop">Drag config here</div>
+        <div class="drop" id="preset-drop">Drag config here</div>
       </div>
     </aside>
 
@@ -313,16 +309,15 @@
         <div class="others">
           <div class="photo-kbd" id="photo-kbd"></div>
           <div class="card">
-            <div><b>Keyboard Firmware Version: <span id="fw2">—</span></b><small>Build <span id="build">—</span>. This app never updates firmware.</small></div>
-            <button class="white-btn" disabled>Latest</button>
+            <div><b>Keyboard Firmware Version: <span id="fw2">—</span></b><small>Build <span id="build">—</span></small></div>
           </div>
           <div class="card">
-            <div><b>Reset this profile</b><small>Left out on purpose: this app never sends reset commands.</small></div>
-            <button class="white-btn" disabled>Reset</button>
+            <div><b>Reset this config</b><small>Restore the selected onboard config to its factory settings.</small></div>
+            <button class="white-btn" id="reset-profile">Reset</button>
           </div>
           <div class="card">
-            <div><b>Restore factory settings.</b><small>Left out on purpose: this app never sends factory-reset commands.</small></div>
-            <button class="white-btn" disabled>Reset</button>
+            <div><b>Restore factory settings</b><small>Restore every onboard config, key, macro and setting on the keyboard to factory defaults.</small></div>
+            <button class="white-btn" id="reset-all">Reset</button>
           </div>
         </div>
       </section>
@@ -332,6 +327,43 @@
     <div class="dialog" role="dialog" aria-modal="true">
       <p id="confirm-text"></p>
       <div class="dialog-btns"><button class="white-btn" id="confirm-ok"></button><button class="primary-btn" id="confirm-cancel">Cancel</button></div>
+    </div>
+  </div>
+  <div class="menu" id="profile-menu" role="menu" hidden>
+    <button role="menuitem" data-act="move" data-for="onboard">Move to Custom Configuration</button>
+    <button role="menuitem" data-act="rename" data-for="onboard custom">Rename</button>
+    <button role="menuitem" data-act="export" data-for="onboard custom">Export</button>
+    <button role="menuitem" data-act="delete" data-for="onboard custom">Delete</button>
+  </div>
+  <div class="overlay" id="create" hidden>
+    <div class="dialog wide-dialog" role="dialog" aria-modal="true" aria-labelledby="create-title">
+      <div class="dialog-head"><b id="create-title">Create configuration</b><button class="icon-btn" data-close="create" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button></div>
+      <div class="field-title">The configuration name</div>
+      <label class="rename-field tight"><input class="input" id="create-name" maxlength="15" spellcheck="false" placeholder="Please enter the configuration scheme name."><span class="muted" id="create-count">0/15</span></label>
+      <div class="hint">Copy current onboard configuration as a new profile</div>
+      <div class="field-title">Select a preset (based on usage scenarios; further adjustments available)</div>
+      <div class="cards four" id="create-sources"></div>
+      <div class="field-title">Config Storage Location</div>
+      <div class="cards two" id="create-storage"></div>
+      <div class="dialog-btns center"><button class="primary-btn" id="create-ok" disabled>Confirm</button><button class="white-btn" data-close="create">Cancel</button></div>
+    </div>
+  </div>
+  <div class="overlay" id="import" hidden>
+    <div class="dialog import-dialog" role="dialog" aria-modal="true" aria-labelledby="import-title">
+      <div class="dialog-head"><b id="import-title">Import configuration</b><button class="icon-btn" data-close="import" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button></div>
+      <div class="file-row"><button class="white-btn" id="import-file"><svg class="ic sm"><use href="#i-plus"/></svg>Select file</button><span class="muted" id="import-file-name"></span></div>
+      <div class="field-title">name</div>
+      <label class="rename-field"><input class="input" id="import-name" maxlength="15" spellcheck="false" placeholder="Name auto-filled"><span class="muted" id="import-count">0/15</span></label>
+      <div class="field-title">Config Storage Location</div>
+      <div class="cards two" id="import-storage"></div>
+      <div class="dialog-btns center"><button class="primary-btn" id="import-ok" disabled>Confirm</button><button class="white-btn" data-close="import">Cancel</button></div>
+    </div>
+  </div>
+  <div class="overlay" id="rename" hidden>
+    <div class="dialog rename-dialog" role="dialog" aria-modal="true" aria-labelledby="rename-title">
+      <div class="dialog-head"><b id="rename-title">Rename</b><button class="icon-btn" id="rename-x" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button></div>
+      <label class="rename-field"><input class="input" id="rename-input" maxlength="15" spellcheck="false"><span class="muted" id="rename-count"></span></label>
+      <div class="dialog-btns center"><button class="primary-btn" id="rename-ok" disabled>Confirm</button><button class="white-btn" id="rename-cancel">Cancel</button></div>
     </div>
   </div>
   <div class="toast" id="toast" hidden></div>

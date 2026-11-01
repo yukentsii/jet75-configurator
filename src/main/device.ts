@@ -174,6 +174,98 @@ export class Jet75 {
     };
   }
 
+  resetProfile(profile: number) {
+    return this.write(P.Cmd.reset, 0, [profile & 0x03]);
+  }
+
+  // Resets every profile, macro and setting. The keyboard reconnects afterwards.
+  factoryReset() {
+    return this.write(P.Cmd.reset, 0, [0xff]);
+  }
+
+  // Everything that belongs to one profile, as raw bytes: an exact copy that can be saved, exported and restored.
+  async snapshot(profile: number): Promise<P.Snapshot> {
+    const keys: number[][] = [];
+    for (let layer = 0; layer < P.LAYERS; layer++) {
+      keys.push(await this.read(P.Cmd.getKeyMatrix, P.keymapOffset(profile, layer), 3 * P.KEY_COUNT));
+    }
+    return {
+      format: P.SNAPSHOT_FORMAT,
+      keys,
+      settings: await this.funcConfig(profile),
+      triggers: await this.read(P.Cmd.getTrigger, P.TRIGGER_SIZE * profile, P.TRIGGER_SIZE),
+      dks: await this.read(P.Cmd.getDks, P.DKS.size * profile, P.DKS.size),
+      mt: await this.read(P.Cmd.getMt, P.MT.size * profile, P.MT.size),
+      tgl: await this.read(P.Cmd.getTgl, P.TGL.size * profile, P.TGL.size),
+    };
+  }
+
+  // A built-in configuration as a snapshot, without writing it anywhere. Settings start from `base`'s.
+  async presetSnapshot(def: PresetDef, base: number): Promise<P.Snapshot> {
+    const preset = await this.buildPreset(def);
+    let settings = P.applyLighting(await this.funcConfig(base), {
+      effect: preset.lighting.effect, brightness: preset.lighting.brightness, speed: preset.lighting.speed, color: preset.lighting.color,
+    });
+    settings[11] = preset.lighting.direction;
+    settings[12] = preset.lighting.customColorDisabled ? 1 : 0;
+    settings = P.applyPerformance(settings, preset.performance);
+    return {
+      format: P.SNAPSHOT_FORMAT,
+      keys: preset.keys.map((layer) => layer.flat()),
+      settings,
+      triggers: preset.triggers.flatMap(P.encodeTrigger),
+      dks: new Array(P.DKS.size).fill(0),
+      mt: new Array(P.MT.size).fill(0),
+      tgl: new Array(P.TGL.size).fill(0),
+    };
+  }
+
+  // Writes a snapshot into a profile. The target keeps its own polling rate, like built-in configurations do.
+  async restoreSnapshot(profile: number, s: P.Snapshot) {
+    P.checkSnapshot(s);
+    for (let layer = 0; layer < P.LAYERS; layer++) {
+      await this.write(P.Cmd.setKeyMatrix, P.keyWriteOffset(profile, layer, 0), s.keys[layer]);
+    }
+    const current = await this.funcConfig(profile);
+    const settings = s.settings.slice();
+    settings[4] = (settings[4] & 0xf0) | (current[4] & 0x0f);
+    await this.write(P.Cmd.setFuncConfig, P.FUNC_SIZE * profile, settings);
+    await this.write(P.Cmd.setTrigger, P.TRIGGER_SIZE * profile, s.triggers);
+    await this.write(P.Cmd.setDks, P.DKS.size * profile, s.dks);
+    await this.write(P.Cmd.setMt, P.MT.size * profile, s.mt);
+    await this.write(P.Cmd.setTgl, P.TGL.size * profile, s.tgl);
+  }
+
+  // Profile table: byte 0 = position of the active profile in the order, byte 1 = enabled count, bytes 2–5 = order.
+  // Profiles past `count` in the order are disabled.
+  private async writeTable(order: number[], count: number, active: number) {
+    const base = (await this.profiles()).raw.slice();
+    order.forEach((p, i) => (base[2 + i] = p));
+    base[1] = count;
+    base[0] = order.indexOf(active);
+    await this.write(P.Cmd.setBase, 0, base);
+    return this.profiles();
+  }
+
+  // Enables the next disabled profile and returns its index.
+  async addProfile(): Promise<number> {
+    const t = await this.profiles();
+    if (t.count >= P.MAX_ONBOARD) throw new Error(`the keyboard holds at most ${P.MAX_ONBOARD} onboard configs`);
+    await this.writeTable(t.order, t.count + 1, t.active);
+    return t.order[t.count];
+  }
+
+  // Disables a profile by moving it behind the enabled ones. The active profile moves to the first remaining one.
+  async deleteProfile(profile: number) {
+    const t = await this.profiles();
+    const enabled = t.order.slice(0, t.count);
+    if (!enabled.includes(profile)) throw new Error('profile is not enabled');
+    if (t.count <= 1) throw new Error('the keyboard needs at least one onboard config');
+    const rest = enabled.filter((p) => p !== profile);
+    const order = [...rest, profile, ...t.order.slice(t.count)];
+    return this.writeTable(order, t.count - 1, t.active === profile ? rest[0] : t.active);
+  }
+
   async profileNames(): Promise<string[]> {
     return P.decodeNames(await this.read(P.Cmd.getCustom, P.NAMES_OFFSET, P.NAMES_SIZE));
   }

@@ -130,56 +130,89 @@ export async function runUiTest(win: BrowserWindow, getDevice: () => Promise<Jet
   check('keys restored', restoredKey.code2 === original.code2 && restoredKey.type === original.type &&
     restoredSpare.type === spare.type && restoredSpare.code1 === spare.code1 && restoredSpare.code2 === spare.code2);
   check('macro region restored', (await kb.macroRegion()).every((b, i) => b === region[i]));
-  // official preset: drag "FPS Game" onto a non-active onboard profile, confirm, check its triggers, restore from a raw backup
+  // sidebar: rename through the ⋮ menu and dialog, then drag built-in configurations with real mouse input
   const base = await kb.profiles();
   const target = base.order.slice(0, base.count).find((p) => p !== base.active);
   if (target == null) {
-    check('preset applied by drag (needs a second enabled profile)', false);
+    check('sidebar tests (need a second enabled profile)', false);
     return out;
   }
-  const preset = await kb.buildPreset(PRESETS.find((p) => p.name === 'FPS Game')!);
-  // [read cmd, write cmd, offset, size] for every area a preset writes, for profile `target`
+  const extra = base.count < 3 ? base.order[base.count] : -1; // the profile a drop on "Drag config here" enables
+  const areas = (p: number): [number, number, number, number][] => [
+    ...[0, 1, 2, 3].map((layer): [number, number, number, number] => [0x08, 0x09, 512 * (4 * p + layer), 384]),
+    [0x05, 0x06, 64 * p, 64], [0xa0, 0xa1, 1024 * p, 1024], [0xa2, 0xa3, 768 * p, 768],
+    [0xa4, 0xa5, 256 * p, 256], [0xa6, 0xa7, 128 * p, 128],
+  ];
+  // [read cmd, write cmd, offset, size] for everything these steps can write
   const regions: [number, number, number, number][] = [
-    ...[0, 1, 2, 3].map((layer): [number, number, number, number] => [0x08, 0x09, 512 * (4 * target + layer), 384]),
-    [0x05, 0x06, 64 * target, 64], [0xa0, 0xa1, 1024 * target, 1024], [0xa2, 0xa3, 768 * target, 768],
-    [0xa4, 0xa5, 256 * target, 256], [0xa6, 0xa7, 128 * target, 128],
-    // profile names, copied into every profile
+    ...areas(target), ...(extra >= 0 ? areas(extra) : []),
     ...[0, 1, 2, 3].map((p): [number, number, number, number] => [0xf1, 0xf2, 1024 * p + 336, 280]),
   ];
   const backup: number[][] = [];
   for (const [r, , off, size] of regions) backup.push(await kb.rawRegion(r, off, size));
+  const table = base.raw.slice();
 
-  // rename the target profile through its ⋮ button, then check the keyboard stored it
+  // rename
   await click(`#profiles [data-profile="${target}"] .profile-more`);
-  await js(`(() => { const i = document.querySelector('#profiles .rename'); i.value = 'Renamed by test'; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); })()`);
+  const menuShown = !(await js(`document.getElementById('profile-menu').hidden`));
+  await click('#profile-menu [data-act="rename"]');
+  const okDisabledAtFirst = await js(`document.getElementById('rename-ok').disabled`);
+  await js(`(() => { const i = document.getElementById('rename-input'); i.value = 'Renamed by test'; i.dispatchEvent(new Event('input')); })()`);
+  const counter = String(await js(`document.getElementById('rename-count').textContent`));
+  await click('#rename-ok');
   await wait(1500);
-  const names = await kb.profileNames();
-  check('ui rename stored on keyboard and shown in sidebar', names[target] === 'Renamed by test' &&
+  check('ui rename via menu and dialog stored on keyboard', menuShown && okDisabledAtFirst && counter === '15/15' &&
+    (await kb.profileNames())[target] === 'Renamed by test' &&
     String(await js(`document.querySelector('#profiles [data-profile="${target}"] .profile-name').textContent`)) === 'Renamed by test');
 
-  // Chromium only starts a real drag from a draggable element that is not a <button>
-  check('presets are draggable non-button elements', await js(`[...document.querySelectorAll('[data-preset]')].every((e) => e.tagName !== 'BUTTON' && e.draggable)`));
-  await js(`(() => {
-    const src = document.querySelector('[data-preset="${preset.id}"]');
-    const dst = document.querySelector('#profiles [data-profile="${target}"]');
-    src.dispatchEvent(new DragEvent('dragstart', { bubbles: true }));
-    dst.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true }));
-    dst.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true }));
-  })()`);
-  await wait(300);
-  const presetAsked = String(await js(`document.getElementById('confirm-text').textContent`)).includes(preset.name);
+  // real mouse drag: press on the preset, move in steps, release over the target
+  const zoom = win.webContents.getZoomFactor();
+  const centre = async (sel: string) => {
+    const r = await js(`(() => { const b = document.querySelector('${sel}').getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2]; })()`) as number[];
+    return { x: Math.round(r[0] * zoom), y: Math.round(r[1] * zoom) };
+  };
+  const mouseDrag = async (fromSel: string, toSel: string) => {
+    const a = await centre(fromSel);
+    const b = await centre(toSel);
+    win.webContents.sendInputEvent({ type: 'mouseDown', x: a.x, y: a.y, button: 'left', clickCount: 1 });
+    for (let i = 1; i <= 12; i++) {
+      win.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(a.x + ((b.x - a.x) * i) / 12), y: Math.round(a.y + ((b.y - a.y) * i) / 12), button: 'left' });
+      await wait(25);
+    }
+    win.webContents.sendInputEvent({ type: 'mouseUp', x: b.x, y: b.y, button: 'left', clickCount: 1 });
+    await wait(300);
+  };
+
+  const fps = await kb.buildPreset(PRESETS.find((p) => p.name === 'FPS Game')!);
+  await mouseDrag(`[data-preset="${fps.id}"]`, `#profiles [data-profile="${target}"]`);
+  const replaceAsked = String(await js(`document.getElementById('confirm-text').textContent`)).includes(fps.name) &&
+    !(await js(`document.getElementById('confirm').hidden`));
   await click('#confirm-ok');
   await wait(8000);
   const t = await kb.triggers(target);
-  check(`ui preset ${preset.name} applied to profile ${target + 1} by drag`, presetAsked &&
-    preset.triggers.every((p, i) => t[i].actuation === p.actuation && t[i].keyMode === p.keyMode));
-  check('preset name given to the profile', (await kb.profileNames())[target] === preset.name);
+  check(`ui mouse drag of ${fps.name} onto a profile replaces it`, replaceAsked &&
+    fps.triggers.every((p, i) => t[i].actuation === p.actuation && t[i].keyMode === p.keyMode) &&
+    (await kb.profileNames())[target] === fps.name);
+
+  if (extra >= 0) {
+    const office = await kb.buildPreset(PRESETS.find((p) => p.name === 'Office Work')!);
+    await mouseDrag(`[data-preset="${office.id}"]`, '#onboard-drop');
+    await wait(8000);
+    const after = await kb.profiles();
+    const te = await kb.triggers(extra);
+    check(`ui mouse drag of ${office.name} onto "Drag config here" adds an onboard config`,
+      after.count === base.count + 1 && te.every((x, i) => x.actuation === office.triggers[i].actuation) &&
+      (await kb.profileNames())[extra] === office.name &&
+      (await js(`document.querySelectorAll('#profiles .profile').length`)) === base.count + 1);
+  }
+
+  await kb.writeRawRegion(0x0e, 0, table);
   for (let i = 0; i < regions.length; i++) await kb.writeRawRegion(regions[i][1], regions[i][2], backup[i]);
-  let restored = true;
+  let restored = (await kb.profiles()).raw.every((b, j) => b === table[j]);
   for (let i = 0; i < regions.length; i++) {
     const now = await kb.rawRegion(regions[i][0], regions[i][2], regions[i][3]);
     restored &&= now.every((b, j) => b === backup[i][j]);
   }
-  check(`profile ${target + 1} restored byte-for-byte after preset`, restored);
+  check('profiles, names and configs restored byte-for-byte after sidebar tests', restored);
   return out;
 }

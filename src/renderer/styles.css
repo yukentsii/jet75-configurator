@@ -116,7 +116,6 @@ div.profile:hover:not(.disabled) { background: var(--btn-secondary-hover); }
 .profile-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .profile .profile-more { width: 26px; height: 26px; margin-right: -6px; }
 .profile .profile-more .ic { width: 18px; height: 18px; stroke-width: 3.2; }
-.profile .rename { height: 28px; padding: 0 8px; font-size: 13px; flex: 1; min-width: 0; }
 .drop {
   display: grid; place-items: center; height: 40px; margin-top: 10px; font-size: 12px; color: var(--text-secondary);
   background: var(--btn-secondary-bg); border: 1px solid var(--border-card); border-radius: 8px;
@@ -391,3 +390,61 @@ html.dark .overlay { background: rgba(0,0,0,.55); }
 .preset { cursor: grab; }
 .preset .ic.sm { color: var(--text-secondary); }
 .profile.drop-target { border-color: var(--accent); border-style: dashed; }
+
+/* onboard drop box and preset dragging */
+.drop { border-style: dashed; transition: border-color .15s, background .15s; }
+.drop.full { opacity: .5; }
+.drop.drop-target, .profile.drop-target { border: 1px dashed var(--accent); background: var(--accent-soft); color: var(--text-primary); }
+.profile.preset.sel { border-color: var(--accent-line); background: var(--accent-soft); }
+.profile.preset:not(.disabled) { cursor: grab; }
+.dragging-preset, .dragging-preset * { cursor: grabbing !important; user-select: none; }
+.drag-ghost {
+  position: fixed; z-index: 40; pointer-events: none; opacity: .9; box-shadow: var(--shadow-lifted);
+  border-color: var(--accent-line) !important; background: var(--bg-card) !important;
+}
+.muted-ic { color: var(--text-secondary) !important; }
+
+/* ⋮ menu */
+.menu {
+  position: fixed; z-index: 30; min-width: 200px; padding: 6px 0; background: var(--bg-card);
+  border: 1px solid var(--border-card); border-radius: 8px; box-shadow: var(--shadow-lifted);
+}
+.menu button { display: block; width: 100%; padding: 8px 16px; border: 0; background: none; text-align: left; font-size: 13px; color: var(--text-primary); }
+.menu button:hover:not(:disabled) { background: var(--bg-hover); }
+.menu button:disabled { color: var(--text-secondary); opacity: .55; }
+
+/* rename dialog */
+.rename-dialog { width: 392px; }
+.dialog-head { display: flex; align-items: center; justify-content: space-between; margin: -6px -8px 18px 0; font-size: 15px; }
+.rename-field { position: relative; display: block; margin-bottom: 24px; }
+.rename-field .input { width: 100%; height: 34px; padding: 0 56px 0 10px; font-size: 13px; }
+.rename-field .muted { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 12px; color: var(--text-secondary); }
+.dialog-btns.center { justify-content: center; }
+.rename-dialog .primary-btn, .rename-dialog .white-btn { min-width: 64px; }
+
+/* Create / Import dialogs */
+.wide-dialog { width: 720px; }
+.import-dialog { width: 520px; }
+.field-title { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+.hint { margin: -16px 0 18px; font-size: 12px; color: var(--text-secondary); }
+.rename-field.tight { margin-bottom: 22px; }
+.cards { display: grid; gap: 10px; margin-bottom: 20px; }
+.cards.four { grid-template-columns: repeat(4, 1fr); }
+.cards.two { grid-template-columns: repeat(2, 1fr); }
+.card-opt {
+  display: grid; align-content: start; gap: 6px; min-height: 64px; padding: 10px 12px; text-align: left;
+  background: var(--btn-secondary-bg); border: 1px solid var(--border-card); border-radius: 8px; color: var(--text-primary);
+}
+.cards.four .card-opt { min-height: 132px; }
+.card-opt b { font-size: 13px; font-weight: 600; }
+.card-opt span { font-size: 11.5px; line-height: 16px; color: var(--text-secondary); white-space: pre-line; }
+.card-opt:hover:not(:disabled) { border-color: var(--accent-line); }
+.card-opt.on { border-color: var(--accent); background: var(--accent-soft); }
+.card-opt:disabled { opacity: .5; cursor: default; }
+.radios-row { display: flex; gap: 24px; margin-bottom: 14px; font-size: 13px; }
+.radio-opt { display: inline-flex; align-items: center; gap: 6px; }
+.radio-opt input { accent-color: var(--accent); }
+.file-row { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.file-row .white-btn { display: inline-flex; align-items: center; gap: 6px; min-width: 0; padding: 0 14px; }
+.file-row .muted { font-size: 12px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-head .muted { margin-left: 4px; font-weight: 400; color: var(--text-secondary); }

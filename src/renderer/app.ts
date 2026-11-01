@@ -75,6 +75,8 @@ const EFFECTS: Record<number, [string, string]> = {
 // The vendor's grid order, row by row.
 const EFFECT_ORDER = [6, 7, 8, 9, 4, 1, 5, 3, 2, 11, 12, 10, 18, 19, 20, 21, 22, 14, 13, 15, 16, 17];
 const EFFECT_OFF = 255;
+// The official app offers 3 onboard configs on this model.
+const MAX_ONBOARD = 3;
 // Stored rate index for each vendor option, verified by setting each option in the vendor app and reading it back.
 const RATES: [string, number][] = [['1k', 4], ['2k', 3], ['4k', 2], ['8k', 1]];
 const SWATCHES = ['#ff0000', '#ff9900', '#ffff00', '#00ff00', '#00ffff', '#0000ff', '#ff00ff'];
@@ -162,8 +164,8 @@ const state = {
   advKind: 'mt' as AdvKind,
   advKey: -1,
   presets: [] as Preset[],
-  dragPreset: null as number | null,
   names: [] as string[],
+  custom: [] as CustomItem[],
   testPress: [] as string[],
   testRelease: [] as string[],
 };
@@ -308,6 +310,13 @@ function renderPhotoKeyboard() {
 
 // profiles sidebar
 
+interface CustomItem { id: string; name: string }
+type ListItem = { kind: 'preset'; id: number } | { kind: 'custom'; id: string };
+type StoreResult = { custom?: CustomItem[]; profile?: number; names?: string[]; profiles?: Profiles };
+
+const NAME_MAX = 15;
+const MAX_CUSTOM = 19;
+
 // A name the keyboard's own app stores as a reference to a built-in configuration, e.g. 'EQ<official@-5:0>QE'.
 // Its number counts the vendor's list, which has one extra entry before the six configurations.
 function profileName(i: number): string {
@@ -317,111 +326,273 @@ function profileName(i: number): string {
   return raw || `Profile ${i + 1}`;
 }
 
+function moreButton(label: string, open: (b: HTMLButtonElement) => void) {
+  const more = el('button', 'icon-btn profile-more') as HTMLButtonElement;
+  more.setAttribute('aria-label', `More for ${label}`);
+  more.append(icon('i-dots'));
+  more.onclick = (e) => { e.stopPropagation(); open(more); };
+  return more;
+}
+
 function renderProfiles() {
   const p = state.profiles!;
   const enabled = p.order.slice(0, p.count);
-  $('profile-count').textContent = `(${p.count}/4)`;
+  $('profile-count').textContent = `(${p.count}/${MAX_ONBOARD})`;
   const item = (i: number) => {
     const b = el('div', 'profile' + (i === p.active ? ' active' : '')) as HTMLDivElement;
     b.dataset.profile = String(i);
     b.setAttribute('role', 'button');
     b.tabIndex = 0;
-    const label = el('span', 'profile-name', profileName(i));
-    const more = el('button', 'icon-btn profile-more') as HTMLButtonElement;
-    more.title = 'Rename';
-    more.setAttribute('aria-label', `Rename ${profileName(i)}`);
-    more.append(icon('i-dots'));
-    more.onclick = (e) => { e.stopPropagation(); startRename(b, label, i); };
-    b.append(label, el('span', 'spacer'), more);
-    const usable = enabled.includes(i) && state.writes.profile;
-    b.classList.toggle('disabled', !usable);
-    b.onclick = () => usable && i !== p.active && switchProfile(i);
+    b.append(el('span', 'profile-name', profileName(i)), el('span', 'spacer'),
+      moreButton(profileName(i), (m) => openMenu(m, { kind: 'onboard', profile: i })));
+    b.onclick = () => i !== p.active && switchProfile(i);
     b.onkeydown = (e) => { if (e.key === 'Enter' && e.target === b) b.click(); };
-    b.ondblclick = () => startRename(b, label, i);
-    // drop target for built-in configurations
-    b.ondragover = (e) => {
-      if (state.dragPreset == null) return;
-      e.preventDefault();
-      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
-      b.classList.add('drop-target');
-    };
-    b.ondragleave = () => b.classList.remove('drop-target');
-    b.ondrop = (e) => {
-      e.preventDefault();
-      b.classList.remove('drop-target');
-      const id = state.dragPreset ?? Number(e.dataTransfer?.getData('text/plain'));
-      state.dragPreset = null;
-      if (Number.isInteger(id)) applyPreset(id, i);
-    };
     return b;
   };
   $('profiles').replaceChildren(...enabled.map(item));
+  $('onboard-drop').classList.toggle('full', p.count >= MAX_ONBOARD);
 }
 
-function startRename(row: HTMLElement, label: HTMLElement, i: number) {
-  if (!state.writes.profile || row.querySelector('input')) return;
-  const input = el('input', 'input rename') as HTMLInputElement;
-  input.value = profileName(i);
-  input.maxLength = 40;
-  label.replaceWith(input);
+// ⋮ menu: the same items for onboard configs and custom configs, like the official app's
+
+type MenuTarget = { kind: 'onboard'; profile: number } | { kind: 'custom'; id: string };
+let menuTarget: MenuTarget | null = null;
+
+function openMenu(anchor: HTMLElement, target: MenuTarget) {
+  const menu = $('profile-menu');
+  if (!menu.hidden && JSON.stringify(menuTarget) === JSON.stringify(target)) { closeMenu(); return; }
+  menuTarget = target;
+  for (const b of Array.from(menu.querySelectorAll<HTMLButtonElement>("button"))) b.hidden = !(b.dataset.for ?? '').split(' ').includes(target.kind);
+  (menu.querySelector('[data-act="delete"]') as HTMLButtonElement).disabled = target.kind === 'onboard' && state.profiles!.count <= 1;
+  (menu.querySelector('[data-act="move"]') as HTMLButtonElement).disabled = state.custom.length >= MAX_CUSTOM;
+  const r = anchor.getBoundingClientRect();
+  menu.style.left = `${r.left - 150}px`;
+  menu.style.top = `${r.bottom + 4}px`;
+  menu.hidden = false;
+}
+
+function closeMenu() {
+  $('profile-menu').hidden = true;
+  menuTarget = null;
+}
+
+function initMenu() {
+  $('profile-menu').onclick = async (e) => {
+    const act = (e.target as HTMLElement).closest('button')?.dataset.act;
+    const t = menuTarget;
+    if (!act || !t) return;
+    closeMenu();
+    const name = t.kind === 'onboard' ? profileName(t.profile) : state.custom.find((c) => c.id === t.id)?.name ?? '';
+    if (act === 'rename') openRename(t, name);
+    if (act === 'delete') deleteTarget(t, name);
+    if (act === 'export') {
+      const ok = await call<boolean>(t.kind === 'onboard' ? 'exportProfile' : 'exportCustom', ...(t.kind === 'onboard' ? [t.profile, name] : [t.id]));
+      if (ok) toast(`${name} exported`);
+    }
+    if (act === 'move' && t.kind === 'onboard') {
+      const list = await call<CustomItem[]>('moveToCustom', t.profile, name);
+      if (list) { state.custom = list; showList('custom'); toast(`${name} copied to custom configs`); }
+    }
+  };
+  document.addEventListener('click', (e) => {
+    if (!$('profile-menu').hidden && !(e.target as HTMLElement).closest('#profile-menu, .profile-more')) closeMenu();
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeMenu(); closeDialogs(); } });
+}
+
+// rename dialog: 15 characters, Confirm only once the name changed
+
+let renameTarget: MenuTarget | null = null;
+
+function openRename(target: MenuTarget, name: string) {
+  renameTarget = target;
+  const input = $<HTMLInputElement>('rename-input');
+  input.value = name.slice(0, NAME_MAX);
+  input.dataset.original = input.value;
+  updateRenameState();
+  $('rename').hidden = false;
   input.focus();
   input.select();
-  let done = false;
-  const finish = async (save: boolean) => {
-    if (done) return;
-    done = true;
-    const name = input.value.trim();
-    if (save && name !== profileName(i)) {
-      const names = await call<string[]>('renameProfile', i, name === `Profile ${i + 1}` ? '' : name);
-      if (names) { state.names = names; toast(`Renamed to ${name || `Profile ${i + 1}`}`); }
-    }
-    renderProfiles();
-  };
+}
+
+function updateRenameState() {
+  const input = $<HTMLInputElement>('rename-input');
+  $('rename-count').textContent = `${input.value.length}/${NAME_MAX}`;
+  $<HTMLButtonElement>('rename-ok').disabled = !input.value.trim() || input.value.trim() === input.dataset.original;
+}
+
+async function confirmRename() {
+  const name = $<HTMLInputElement>('rename-input').value.trim();
+  const t = renameTarget;
+  if (!name || !t) return;
+  $('rename').hidden = true;
+  renameTarget = null;
+  if (t.kind === 'onboard') {
+    const names = await call<string[]>('renameProfile', t.profile, name);
+    if (names) { state.names = names; renderProfiles(); toast(`Renamed to ${name}`); }
+  } else {
+    const list = await call<CustomItem[]>('renameCustom', t.id, name);
+    if (list) { state.custom = list; renderList(); toast(`Renamed to ${name}`); }
+  }
+}
+
+function initRename() {
+  const input = $<HTMLInputElement>('rename-input');
+  input.oninput = updateRenameState;
   input.onkeydown = (e) => {
     e.stopPropagation();
-    if (e.key === 'Enter') finish(true);
-    if (e.key === 'Escape') finish(false);
+    if (e.key === 'Enter' && !$<HTMLButtonElement>('rename-ok').disabled) confirmRename();
+    if (e.key === 'Escape') $('rename').hidden = true;
   };
-  input.onclick = (e) => e.stopPropagation();
-  input.onblur = () => finish(true);
+  $('rename-ok').onclick = confirmRename;
+  $('rename-cancel').onclick = () => ($('rename').hidden = true);
+  $('rename-x').onclick = () => ($('rename').hidden = true);
 }
 
-// built-in configurations
+async function deleteTarget(t: MenuTarget, name: string) {
+  if (t.kind === 'custom') {
+    if (!(await confirmDialog(`Delete ${name}? This custom config is removed from this PC.`, 'Delete'))) return;
+    const list = await call<CustomItem[]>('deleteCustom', t.id);
+    if (list) { state.custom = list; renderList(); toast(`${name} deleted`); }
+    return;
+  }
+  if (!(await confirmDialog(`Delete ${name}? It is removed from the keyboard's onboard configs.`, 'Delete'))) return;
+  const r = await call<{ profiles: Profiles; names: string[] }>('deleteProfile', t.profile);
+  if (!r) return;
+  const switched = r.profiles.active !== state.profiles!.active;
+  state.profiles = r.profiles;
+  state.names = r.names;
+  renderProfiles();
+  toast(`${name} deleted`);
+  if (switched) {
+    state.profile = r.profiles.active;
+    await loadProfile();
+  }
+}
 
-function renderPresets() {
-  $('presets').replaceChildren(...state.presets.map((p) => {
-    // a div, not a button: Chromium does not start drags from <button> elements
-    const b = el('div', 'profile preset') as HTMLDivElement;
-    b.dataset.preset = String(p.id);
+// Custom / Official lists below the onboard configs
+
+let listTab: 'custom' | 'official' = 'official';
+let selectedItem = '';
+
+function showList(tab: 'custom' | 'official') {
+  listTab = tab;
+  for (const b of Array.from($("list-tabs").querySelectorAll<HTMLButtonElement>("button"))) b.classList.toggle('on', b.dataset.list === tab);
+  renderList();
+}
+
+function renderList() {
+  const custom = listTab === 'custom';
+  $('list-head').replaceChildren(document.createTextNode(custom ? 'Custom Config ' : 'Official configuration'));
+  if (custom) $('list-head').append(el('span', 'muted', `(${state.custom.length}/${MAX_CUSTOM})`));
+  const items: { item: ListItem; name: string; help?: string }[] = custom
+    ? state.custom.map((c) => ({ item: { kind: 'custom', id: c.id } as ListItem, name: c.name }))
+    : state.presets.map((p) => ({ item: { kind: 'preset', id: p.id } as ListItem, name: p.name, help: p.help }));
+  $('presets').replaceChildren(...items.map(({ item, name, help }) => {
+    const key = `${item.kind}:${item.id}`;
+    const b = el('div', 'profile preset' + (key === selectedItem ? ' sel' : '')) as HTMLDivElement;
+    b.dataset[item.kind === 'preset' ? 'preset' : 'custom'] = String(item.id);
     b.setAttribute('role', 'button');
     b.tabIndex = 0;
-    b.title = p.help;
-    b.append(el('span', '', p.name), icon('i-help', 'ic sm'), el('span', 'spacer'), icon('i-dots'));
-    const usable = state.writes.keymap;
-    b.classList.toggle('disabled', !usable);
-    b.draggable = usable;
-    b.ondragstart = (e) => {
-      state.dragPreset = p.id;
-      if (e.dataTransfer) { e.dataTransfer.setData('text/plain', String(p.id)); e.dataTransfer.effectAllowed = 'copy'; }
-      b.classList.add('dragging');
+    b.append(el('span', 'profile-name', name), el('span', 'spacer'));
+    if (help) {
+      b.title = help;
+      b.append(icon('i-help', 'ic sm'));
+    } else if (item.kind === 'custom') {
+      const id = item.id;
+      b.append(moreButton(name, (m) => openMenu(m, { kind: 'custom', id })));
+    }
+    b.onpointerdown = (e) => startDrag(e, item, b);
+    b.onclick = () => {
+      if (dragMoved) return;
+      selectedItem = key;
+      renderList();
     };
-    b.ondragend = () => { state.dragPreset = null; b.classList.remove('dragging'); };
-    b.onclick = () => { if (usable) applyPreset(p.id, state.profile); };
-    b.onkeydown = (e) => { if (e.key === 'Enter') b.click(); };
     return b;
   }));
+  $('preset-drop').hidden = !custom;
 }
 
-async function applyPreset(id: number, profile: number) {
-  const p = state.presets.find((x) => x.id === id);
-  if (!p) return;
+// Drag with pointer events: a copy of the row follows the pointer, the drop target lights up.
+let dragMoved = false;
+
+function startDrag(e: PointerEvent, item: ListItem, row: HTMLElement) {
+  if (e.button !== 0 || (e.target as HTMLElement).closest('.profile-more')) return;
+  const sx = e.clientX, sy = e.clientY;
+  let ghost: HTMLElement | null = null;
+  let target: HTMLElement | null = null;
+  dragMoved = false;
+  const findTarget = (x: number, y: number) => {
+    const hit = document.elementFromPoint(x, y) as HTMLElement | null;
+    return (hit?.closest('#onboard-drop:not(.full), #profiles .profile') as HTMLElement | null) ?? null;
+  };
+  const move = (ev: PointerEvent) => {
+    if (!dragMoved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 5) return;
+    if (!dragMoved) {
+      dragMoved = true;
+      ghost = row.cloneNode(true) as HTMLElement;
+      ghost.classList.add('drag-ghost');
+      ghost.style.width = `${row.getBoundingClientRect().width}px`;
+      document.body.append(ghost);
+      row.classList.add('dragging');
+      document.body.classList.add('dragging-preset');
+    }
+    ghost!.style.left = `${ev.clientX - 20}px`;
+    ghost!.style.top = `${ev.clientY - 18}px`;
+    const t = findTarget(ev.clientX, ev.clientY);
+    if (t !== target) {
+      target?.classList.remove('drop-target');
+      t?.classList.add('drop-target');
+      target = t;
+    }
+  };
+  const up = (ev: PointerEvent) => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    ghost?.remove();
+    row.classList.remove('dragging');
+    document.body.classList.remove('dragging-preset');
+    target?.classList.remove('drop-target');
+    if (!dragMoved) return;
+    const t = findTarget(ev.clientX, ev.clientY);
+    if (t?.id === 'onboard-drop') addToOnboard(item);
+    else if (t?.dataset.profile != null) replaceProfile(item, Number(t.dataset.profile));
+    // the click that follows pointerup must not count as a selection
+    setTimeout(() => (dragMoved = false), 0);
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+}
+
+const itemName = (item: ListItem) =>
+  item.kind === 'preset' ? state.presets.find((p) => p.id === item.id)?.name ?? '' : state.custom.find((c) => c.id === item.id)?.name ?? '';
+
+function applyStoreResult(r: StoreResult) {
+  if (r.custom) { state.custom = r.custom; showList('custom'); }
+  if (r.names) state.names = r.names;
+  if (r.profiles) { state.profiles = r.profiles; renderProfiles(); }
+}
+
+async function addToOnboard(item: ListItem) {
+  const r = item.kind === 'preset'
+    ? await call<StoreResult>('addPresetProfile', item.id)
+    : await call<StoreResult>('addCustomProfile', item.id);
+  if (!r) return;
+  applyStoreResult(r);
+  toast(`${itemName(item)} added to onboard configs`);
+}
+
+async function replaceProfile(item: ListItem, profile: number) {
+  const name = itemName(item);
   const target = profileName(profile);
-  if (!(await confirmDialog(`Apply ${p.name} to ${target}? This replaces its keys, lighting and trigger settings.`, 'Apply'))) return;
-  const names = await call<string[]>('applyPreset', profile, id);
+  if (!(await confirmDialog(`Replace ${target} with ${name}? Its keys, lighting and trigger settings are overwritten.`, 'Replace'))) return;
+  const names = item.kind === 'preset'
+    ? await call<string[]>('applyPreset', profile, item.id)
+    : await call<string[]>('applyCustom', item.id, profile);
   if (names === null) return;
   state.names = names;
   renderProfiles();
-  toast(`${p.name} applied to ${target}`);
+  toast(`${target} replaced with ${name}`);
   // the app shows the active profile; reload it when that is the one that changed
   if (profile === state.profile) {
     state.trigSel = new Set();
@@ -438,6 +609,150 @@ async function switchProfile(i: number) {
   renderProfiles();
   toast(`${profileName(p.active)} active`);
   await loadProfile();
+}
+
+// Create and Import dialogs
+
+type StoreKind = 'custom' | 'onboard';
+
+function cards(container: HTMLElement, options: { value: string; title: string; text: string; disabled?: boolean }[], value: string, onPick: (v: string) => void) {
+  container.replaceChildren(...options.map((o) => {
+    const b = el('button', 'card-opt' + (o.value === value ? ' on' : '')) as HTMLButtonElement;
+    b.dataset.value = o.value;
+    b.disabled = !!o.disabled;
+    b.append(el('b', '', o.title), el('span', '', o.text));
+    b.onclick = () => onPick(o.value);
+    return b;
+  }));
+}
+
+function storageCards(container: HTMLElement, value: StoreKind, onPick: (v: StoreKind) => void) {
+  const full = state.profiles!.count >= MAX_ONBOARD;
+  const customFull = state.custom.length >= MAX_CUSTOM;
+  cards(container, [
+    { value: 'custom', title: 'Custom Config', text: 'Stored in the driver, drag to onboard to use.', disabled: customFull },
+    { value: 'onboard', title: 'Onboard config', text: full ? `The keyboard already holds ${MAX_ONBOARD} onboard configs.` : 'Stored directly on the device, accessible anytime.', disabled: full },
+  ], value, (v) => onPick(v as StoreKind));
+}
+
+const defaultStorage = (): StoreKind => (state.custom.length >= MAX_CUSTOM ? 'onboard' : 'custom');
+
+let createSource = 'selected';
+let createStorage: StoreKind = 'custom';
+
+function renderCreate() {
+  const sources = [
+    { value: 'selected', title: 'Selected configuration', text: 'Reuse the trigger settings from the selected configuration.' },
+    ...state.presets.slice(0, 3).map((p) => ({ value: String(p.id), title: p.name, text: p.help })),
+  ];
+  cards($('create-sources'), sources, createSource, (v) => { createSource = v; renderCreate(); });
+  storageCards($('create-storage'), createStorage, (v) => { createStorage = v; renderCreate(); });
+  const name = $<HTMLInputElement>('create-name').value;
+  $('create-count').textContent = `${name.length}/${NAME_MAX}`;
+  const blocked = createStorage === 'custom' ? state.custom.length >= MAX_CUSTOM : state.profiles!.count >= MAX_ONBOARD;
+  $<HTMLButtonElement>('create-ok').disabled = !name.trim() || blocked;
+}
+
+function openCreate() {
+  createSource = 'selected';
+  createStorage = defaultStorage();
+  $<HTMLInputElement>('create-name').value = '';
+  renderCreate();
+  $('create').hidden = false;
+  $<HTMLInputElement>('create-name').focus();
+}
+
+async function confirmCreate() {
+  const name = $<HTMLInputElement>('create-name').value.trim();
+  if (!name) return;
+  $('create').hidden = true;
+  const r = await call<StoreResult>('createConfig', { name, source: createSource === 'selected' ? 'selected' : Number(createSource), storage: createStorage });
+  if (!r) return;
+  applyStoreResult(r);
+  toast(`${name} created`);
+}
+
+let importPath = '';
+let importStorage: StoreKind = 'custom';
+
+function renderImport() {
+  storageCards($('import-storage'), importStorage, (v) => { importStorage = v; renderImport(); });
+  const name = $<HTMLInputElement>('import-name').value;
+  $('import-count').textContent = `${name.length}/${NAME_MAX}`;
+  const blocked = importStorage === 'custom' ? state.custom.length >= MAX_CUSTOM : state.profiles!.count >= MAX_ONBOARD;
+  $<HTMLButtonElement>('import-ok').disabled = !importPath || !name.trim() || blocked;
+}
+
+function openImport() {
+  importPath = '';
+  importStorage = defaultStorage();
+  $<HTMLInputElement>('import-name').value = '';
+  $('import-file-name').textContent = '';
+  renderImport();
+  $('import').hidden = false;
+}
+
+async function pickImportFile() {
+  const f = await call<{ path: string; name: string } | null>('pickImportFile');
+  if (!f) return;
+  importPath = f.path;
+  $('import-file-name').textContent = f.path.split(/[\\/]/).pop() ?? '';
+  $<HTMLInputElement>('import-name').value = f.name;
+  renderImport();
+}
+
+async function confirmImport() {
+  const name = $<HTMLInputElement>('import-name').value.trim();
+  if (!importPath || !name) return;
+  $('import').hidden = true;
+  const r = await call<StoreResult>('importConfig', { path: importPath, name, storage: importStorage });
+  if (!r) return;
+  applyStoreResult(r);
+  toast(`${name} imported`);
+}
+
+function closeDialogs() {
+  for (const id of ['create', 'import', 'rename']) $(id).hidden = true;
+}
+
+// Others tab: the keyboard's own reset commands
+
+async function resetCurrentProfile() {
+  const name = profileName(state.profile);
+  if (!(await confirmDialog(`Reset ${name} to factory settings? Its keys, lighting, trigger and advanced key settings are cleared.`, 'Reset'))) return;
+  const names = await call<string[]>('resetProfile', state.profile);
+  if (!names) return;
+  state.names = names;
+  renderProfiles();
+  state.trigSel = new Set();
+  state.advKey = -1;
+  await loadProfile();
+  toast(`${name} reset`);
+}
+
+async function factoryReset() {
+  if (!(await confirmDialog('Restore factory settings? Every onboard config, key, macro and setting on the keyboard is reset. Custom configs saved in this app are kept.', 'Reset'))) return;
+  if ((await call('factoryReset')) === null) return;
+  await connect();
+  toast('Factory settings restored');
+}
+
+function initSidebar() {
+  $('reset-profile').onclick = resetCurrentProfile;
+  $('reset-all').onclick = factoryReset;
+  initMenu();
+  initRename();
+  for (const b of Array.from($("list-tabs").querySelectorAll<HTMLButtonElement>("button[data-list]"))) {
+    b.onclick = () => showList(b.dataset.list as 'custom' | 'official');
+  }
+  $('create-btn').onclick = openCreate;
+  $('import-btn').onclick = openImport;
+  $('import-file').onclick = pickImportFile;
+  $<HTMLInputElement>('create-name').oninput = renderCreate;
+  $<HTMLInputElement>('import-name').oninput = renderImport;
+  $('create-ok').onclick = confirmCreate;
+  $('import-ok').onclick = confirmImport;
+  for (const b of Array.from(document.querySelectorAll<HTMLElement>("[data-close]"))) b.onclick = () => ($(b.dataset.close!).hidden = true);
 }
 
 // lighting
@@ -1140,7 +1455,10 @@ async function connect() {
   $('build').textContent = c.info.buildDate;
   renderProfiles();
   const pr = await call<Preset[]>('presets');
-  if (pr) { state.presets = pr; renderPresets(); }
+  if (pr) state.presets = pr;
+  const cu = await call<CustomItem[]>('customConfigs');
+  if (cu) state.custom = cu;
+  renderList();
   const names = await call<string[]>('profileNames');
   if (names) { state.names = names; renderProfiles(); }
   const m = await call<Macro[]>('macros');
@@ -1167,6 +1485,7 @@ initTheme();
 initLightingControls();
 initPerformanceControls();
 initTriggerControls();
+initSidebar();
 renderPicker();
 renderPhotoKeyboard();
 renderKeyboard();
