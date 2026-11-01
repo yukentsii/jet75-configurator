@@ -165,6 +165,13 @@ export class Jet75 {
     return Array.from({ length: P.KEY_COUNT }, (_, i) => d.slice(3 * i, 3 * i + 3) as P.KeyRef);
   }
 
+  // Writes the factory key map of one layer back over the user map.
+  async restoreLayer(profile: number, layer: number) {
+    const keys = await this.defaultKeys(layer);
+    await this.write(P.Cmd.setKeyMatrix, P.keyWriteOffset(profile, layer, 0), keys.flat());
+    return this.keymap(profile, layer);
+  }
+
   async buildPreset(def: PresetDef): Promise<P.Preset> {
     const keys: P.KeyRef[][] = [];
     for (let layer = 0; layer < P.LAYERS; layer++) keys.push(await this.defaultKeys(layer));

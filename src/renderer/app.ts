@@ -5,7 +5,8 @@
 type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 interface Lighting {
   effect: number; brightness: number; speed: number; direction: number; customColorDisabled: boolean;
-  color: string; sideEffect: number; sideBrightness: number; sideSpeed: number; sideColor: string; reportRateIndex: number;
+  color: string; sideEffect: number; sideBrightness: number; sideSpeed: number; sideColor: string;
+  sideCustomColorDisabled: boolean; reportRateIndex: number;
 }
 interface KeyEntry { index: number; type: number; code1: number; code2: number }
 interface Profiles { active: number; count: number; order: number[] }
@@ -27,7 +28,7 @@ type KeyRef = [number, number, number];
 interface MtSlot { tap: KeyRef; hold: KeyRef }
 interface DksSlot { points: number[]; keys: { key: KeyRef; phases: number }[] }
 interface Advanced { dks: DksSlot[]; mt: MtSlot[]; tgl: KeyRef[] }
-type AdvKind = 'mt' | 'tgl' | 'dks';
+type AdvKind = 'rs' | 'mt' | 'tgl' | 'dks';
 interface Preset { id: number; name: string; help: string }
 declare const jet75: Record<string, (...args: unknown[]) => Promise<Result<any>>>;
 
@@ -142,6 +143,7 @@ const icon = (id: string, cls = 'ic') => {
 const state = {
   tab: 'lighting',
   sub: 'basic',
+  zone: 'back' as 'back' | 'logo',
   profile: 0,
   layer: 0,
   writes: { lighting: false, keymap: false, profile: false, macros: false },
@@ -163,6 +165,8 @@ const state = {
   base: [] as KeyEntry[], // layer 1 of the profile, where advanced keys are bound
   advKind: 'mt' as AdvKind,
   advKey: -1,
+  rsKey2: -1,
+  rsPick: 1 as 1 | 2, // which RS key the next keyboard click sets
   presets: [] as Preset[],
   names: [] as string[],
   custom: [] as CustomItem[],
@@ -191,10 +195,54 @@ async function call<T>(name: string, ...args: unknown[]): Promise<T | null> {
   return r.value as T;
 }
 
+// Key Config sub-tab lists, as the vendor shows them: [keycode (type << 16 | code1 << 8 | code2), name, short cap label].
+type FuncItem = [number, string, string?];
+const FUNC_LISTS: Record<string, FuncItem[]> = {
+  mouse: [
+    [0x200100, 'Left mouse button', 'LMB'], [0x200200, 'Right mouse button', 'RMB'], [0x200400, 'Middle mouse button', 'MMB'],
+    [0x201000, 'Mouse forward', 'M Fwd'], [0x200800, 'Mouse backward', 'M Back'], [0x210001, 'Wheel up', 'Wheel ↑'], [0x2100ff, 'Wheel down', 'Wheel ↓'],
+  ],
+  media: [
+    [0x30cd00, 'Play/Pause', 'Play'], [0x30e200, 'Mute'], [0x30b700, 'Stop'], [0x30b600, 'Previous Song', 'Prev'],
+    [0x30b500, 'Next Song', 'Next'], [0x30e900, 'Volume +', 'Vol +'], [0x30ea00, 'Volume -', 'Vol -'],
+  ],
+  lighting: [
+    [0xf02f00, 'Backlight Mode Switch→', 'Mode →'], [0xf02e00, 'Backlight Mode Switch←', 'Mode ←'],
+    [0xf03200, 'Backlight brightness +', 'Bri +'], [0xf03300, 'Backlight brightness -', 'Bri -'],
+    [0xf03600, 'Backlight speed +', 'Spd +'], [0xf03700, 'Backlight speed -', 'Spd -'],
+    [0xf03d00, 'Switch backlight color→', 'Color →'], [0xf03c00, 'Switch backlight color←', 'Color ←'],
+    [0xf03500, 'Toggle keyboard backlight', 'Light'], [0xf0a000, 'LOGO Light Mode Switch', 'Logo Mode'],
+    [0xf01500, 'LOGO Light +', 'Logo +'], [0xf01600, 'LOGO Light -', 'Logo -'], [0xf01800, 'Logo Light Speed+', 'Logo Spd+'],
+    [0xf01700, 'LOGO Light Speed-', 'Logo Spd-'], [0xf01900, 'LOGO Light Speed Switch', 'Logo Spd'],
+    [0xf01a00, 'LOGO Light Color Switch', 'Logo Color'], [0xf01c00, 'LOGO Light On/Off', 'Logo On'],
+  ],
+  ext: [
+    [0x10012d, 'Zoom out'], [0x10012e, 'Zoom in'], [0x100127, 'Reset'], [0x10011c, 'Restore'], [0x10011d, 'Undo'],
+    [0x100104, 'Select all', 'Sel All'], [0x100111, 'Create'], [0x100106, 'Copy'], [0x10011b, 'Cut'], [0x100119, 'Paste'],
+    [0x100116, 'Save'], [0x100112, 'Open'], [0x100117, 'New Item', 'New'], [0x10011a, 'Close item', 'Close'],
+    [0x100450, 'Back (keyboard)', 'Back'], [0x10044f, 'Forward (keyboard)', 'Fwd'], [0x10082b, 'switch window', 'Switch'],
+    [0x100807, 'Show desktop', 'Desktop'], [0x100958, 'Open navigation', 'Nav'], [0x100817, 'Cycle taskbar Apps', 'Taskbar'],
+    [0x100804, 'Action center', 'Action'], [0x100808, 'File Explorer', 'Explorer'], [0x10080c, 'Windows settings center', 'Settings'],
+    [0x10080f, 'Lock computer', 'Lock'], [0x10080e, 'Cast screen to other devices', 'Cast'], [0x100805, 'Jump to tray', 'Tray'],
+    [0x10080a, 'Start Xbox game bar', 'Game Bar'], [0x100815, 'Run'], [0x100816, 'Search'], [0x100818, 'Display settings', 'Display'],
+    [0x10081b, 'Simple menu', 'Menu'], [0x100837, 'Emoji box', 'Emoji'], [0x100129, 'Start menu', 'Start'], [0x10042b, 'Taskbar'],
+    [0x10043d, 'Close window', 'Close Win'], [0x100429, 'Switch to next App', 'Next App'], [0x302302, 'Browser homepage', 'Home Page'],
+    [0x309201, 'Calculator', 'Calc'], [0x308a01, 'Mail'], [0x309401, 'My computer', 'My PC'], [0x302a02, 'Favorites', 'Fav'],
+    [0x10054c, 'Windows security screen', 'Security'], [0x100329, 'Task Manager', 'Task Mgr'], [0x306f00, 'Screen brightness +', 'Scr +'],
+    [0x307000, 'Screen brightness -', 'Scr -'], [0x302102, 'Search (Web)', 'Web Search'], [0x302702, 'Refresh (web page)', 'Refresh'],
+    [0xf0fa00, 'Switch to onboard', 'Onboard'], [0x100000, 'Disable', 'None'], [0xf0ff01, 'Win Fn'],
+  ],
+};
+const FUNC_BY_CODE = new Map<number, FuncItem>(Object.values(FUNC_LISTS).flat().map((f) => [f[0], f]));
+const codeOf = (k: { type: number; code1: number; code2: number }) => (k.type << 16) | (k.code1 << 8) | k.code2;
+
 const MOD_NAMES = ['Ctrl', 'Shift', 'Alt', 'Win', 'RCtrl', 'RShift', 'RAlt', 'RWin'];
 
 function keyName(k: KeyEntry): string {
+  const f = FUNC_BY_CODE.get(codeOf(k));
+  if (f) return f[2] ?? f[1];
   if (k.type === 0xf0) return 'Fn';
+  if (k.type === 0x93) return `RS${Math.floor(k.code1 / 2) + 1}`;
   if (k.type === 0x70) return `M${k.code1 + 1}`;
   if (k.type === 0x90) return `DKS${k.code1 + 1}`;
   if (k.type === 0x91) return `TGL${k.code1 + 1}`;
@@ -275,7 +323,7 @@ function renderKeyboard() {
       b.textContent = capLabel(def);
     }
     if (trig && state.trigView !== 'preview' && state.triggers[i]) b.append(el('span', 'v', triggerLabel(state.triggers[i])));
-    if (trig ? state.trigSel.has(i) : adv ? i === state.advKey : i === state.selected) b.classList.add('sel');
+    if (trig ? state.trigSel.has(i) : adv ? i === state.advKey || i === state.rsKey2 : i === state.selected) b.classList.add('sel');
     b.onclick = () => (editing ? selectKey(i) : trig ? toggleTrigKey(i) : adv ? selectAdvKey(i) : undefined);
     return b;
   }));
@@ -286,7 +334,9 @@ function renderKeyboard() {
   $('layers').hidden = !(editing || adv);
   const names = [['i-win', 'Win Default'], ['i-win', 'Win Fn'], ['i-apple', 'Mac Default'], ['i-apple', 'Mac Fn']];
   const restore = el('button', 'outline-btn', 'Restore defaults') as HTMLButtonElement;
-  restore.disabled = true;
+  restore.id = 'restore-layer';
+  restore.disabled = adv || !state.writes.keymap;
+  restore.onclick = restoreLayer;
   $('layers').replaceChildren(...names.map(([ic, label], i) => {
     const b = el('button', 'outline-btn' + ((adv ? 0 : state.layer) === i ? ' on' : '')) as HTMLButtonElement;
     b.dataset.layer = String(i);
@@ -757,30 +807,47 @@ function initSidebar() {
 
 // lighting
 
+// The Backlight and LOGO Light segments edit the same controls; the LOGO light uses the side-light fields.
+type ZoneField = 'effect' | 'brightness' | 'speed' | 'color' | 'customColorDisabled';
+const SIDE: Record<ZoneField, keyof Lighting> = {
+  effect: 'sideEffect', brightness: 'sideBrightness', speed: 'sideSpeed', color: 'sideColor', customColorDisabled: 'sideCustomColorDisabled',
+};
+const zoneKey = (f: ZoneField): keyof Lighting => (state.zone === 'logo' ? SIDE[f] : f);
+const zoneValue = <T>(f: ZoneField) => state.lighting![zoneKey(f)] as unknown as T;
+const zonePatch = (f: ZoneField, v: unknown): Partial<Lighting> => ({ [zoneKey(f)]: v });
+// Effects that move in a direction show the vendor's Direction control (backlight only).
+const DIRECTIONAL = new Set([1, 2, 6, 7, 11, 12, 18, 19]);
+
 function renderLighting() {
   const l = state.lighting!;
+  const effect = zoneValue<number>('effect');
+  document.querySelectorAll<HTMLButtonElement>('#light-zone button').forEach((b) => b.classList.toggle('on', b.dataset.zone === state.zone));
   // an effect outside the vendor grid (custom, or an unknown value) gets its own button at the end
-  const ids = EFFECT_ORDER.includes(l.effect) || l.effect === EFFECT_OFF ? EFFECT_ORDER : [...EFFECT_ORDER, l.effect];
+  const ids = EFFECT_ORDER.includes(effect) || effect === EFFECT_OFF ? EFFECT_ORDER : [...EFFECT_ORDER, effect];
   $('effects').replaceChildren(...ids.map((id) => {
-    const b = el('button', 'effect' + (id === l.effect ? ' on' : '')) as HTMLButtonElement;
+    const b = el('button', 'effect' + (id === effect ? ' on' : '')) as HTMLButtonElement;
     const [name, ic] = EFFECTS[id] ?? [`Effect ${id}`, 'e-dot'];
     b.append(icon(ic), el('span', '', name));
     b.dataset.effect = String(id);
     b.disabled = !state.writes.lighting;
-    b.onclick = () => patchLighting({ effect: id }, name);
+    b.onclick = () => patchLighting(zonePatch('effect', id), name);
     return b;
   }));
-  $('light-on').classList.toggle('on', l.effect !== EFFECT_OFF);
+  $('light-on').classList.toggle('on', effect !== EFFECT_OFF);
   $<HTMLButtonElement>('light-on').disabled = !state.writes.lighting;
-  $<HTMLInputElement>('speed').value = String(l.speed);
-  $<HTMLInputElement>('brightness').value = String(l.brightness);
+  $<HTMLInputElement>('speed').value = String(zoneValue<number>('speed'));
+  $<HTMLInputElement>('brightness').value = String(zoneValue<number>('brightness'));
   paintRange($('speed'));
   paintRange($('brightness'));
-  $('speed-v').textContent = `${l.speed}Level`;
-  $('brightness-v').textContent = `${l.brightness}%`;
-  $('custom-color').classList.toggle('on', !l.customColorDisabled);
-  showColor(l.color);
-  $('light-note').textContent = l.customColorDisabled ? 'This profile uses preset colours. Picking a colour turns custom colour on.' : '';
+  $('speed-v').textContent = `${zoneValue<number>('speed')}Level`;
+  $('brightness-v').textContent = `${zoneValue<number>('brightness')}%`;
+  $('direction-block').hidden = state.zone !== 'back' || !DIRECTIONAL.has(effect);
+  document.querySelectorAll<HTMLButtonElement>('#direction button').forEach((b) => b.classList.toggle('on', Number(b.dataset.dir) === l.direction));
+  const customOff = zoneValue<boolean>('customColorDisabled');
+  $('custom-color').classList.toggle('on', !customOff);
+  $<HTMLButtonElement>('custom-color').disabled = !state.writes.lighting;
+  showColor(zoneValue<string>('color'));
+  $('light-note').textContent = customOff ? 'Custom colour is off: the effect uses its own colours. Picking a colour turns it on.' : '';
 }
 
 // colour picker: saturation/value square and hue strip
@@ -826,7 +893,7 @@ function pickColor(hex: string, keepHsv = false) {
   hex = hex.toLowerCase();
   showColor(hex, keepHsv);
   clearTimeout(colorTimer);
-  colorTimer = window.setTimeout(() => patchLighting({ color: hex }, 'Colour saved'), 300);
+  colorTimer = window.setTimeout(() => patchLighting(zonePatch('color', hex), 'Colour saved'), 300);
 }
 
 function drag(target: HTMLElement, onMove: (fx: number, fy: number) => void) {
@@ -862,16 +929,26 @@ function initLightingControls() {
   }));
   // The effects switch turns lighting off (value 255); turning it back on picks rainbow cycle.
   $('light-on').onclick = () => {
-    const off = state.lighting!.effect !== EFFECT_OFF;
-    patchLighting({ effect: off ? EFFECT_OFF : 1 }, off ? 'Lighting off' : 'Lighting on');
+    const off = zoneValue<number>('effect') !== EFFECT_OFF;
+    patchLighting(zonePatch('effect', off ? EFFECT_OFF : 1), off ? 'Lighting off' : 'Lighting on');
   };
+  $('custom-color').onclick = () => {
+    const off = zoneValue<boolean>('customColorDisabled');
+    patchLighting(zonePatch('customColorDisabled', !off), off ? 'Custom colour on' : 'Custom colour off');
+  };
+  document.querySelectorAll<HTMLButtonElement>('#light-zone button').forEach((b) => (b.onclick = () => {
+    state.zone = b.dataset.zone as 'back' | 'logo';
+    renderLighting();
+  }));
+  document.querySelectorAll<HTMLButtonElement>('#direction button').forEach((b) => (b.onclick = () =>
+    patchLighting({ direction: Number(b.dataset.dir) }, b.textContent!)));
   for (const id of ['speed', 'brightness'] as const) {
     const input = $<HTMLInputElement>(id);
     input.oninput = () => {
       paintRange(input);
       $(id + '-v').textContent = id === 'speed' ? `${input.value}Level` : `${input.value}%`;
     };
-    input.onchange = () => patchLighting({ [id]: Number(input.value) }, `${id === 'speed' ? 'Speed' : 'Brightness'} ${input.value}`);
+    input.onchange = () => patchLighting(zonePatch(id, Number(input.value)), `${id === 'speed' ? 'Speed' : 'Brightness'} ${input.value}`);
   }
 }
 
@@ -951,6 +1028,10 @@ const WASD = [0x1a, 0x04, 0x16, 0x07];
 const FACTORY_TRIGGER: Partial<Trigger> = { keyMode: 1, actuation: 120, rtPress: 80, rtRelease: 80, pressDeadzone: 0, releaseDeadzone: 0 };
 const RANGE_FIELDS = ['rtPress', 'rtRelease', 'pressDeadzone', 'releaseDeadzone'] as const;
 const trigFields = { actuation: 120, rtPress: 80, rtRelease: 80, pressDeadzone: 0, releaseDeadzone: 0, keyMode: 1 };
+// The vendor's limits, in 0.01 mm.
+const ACTUATION_MIN = 9;
+const ACTUATION_MAX = 340;
+const DEADZONE_FIELDS = new Set<string>(['pressDeadzone', 'releaseDeadzone']);
 
 function triggerLabel(t: Trigger): string {
   if (state.trigView === 'actuation') return mm(t.actuation);
@@ -978,7 +1059,8 @@ function renderTriggerPanel() {
   const n = state.trigSel.size;
   $('trig-count').textContent = n ? `${n} key${n > 1 ? 's' : ''} selected. Changes are written to them straight away.` : 'Select keys on the keyboard to change them.';
   if (document.activeElement !== $('t-actuation')) $<HTMLInputElement>('t-actuation').value = mm(trigFields.actuation);
-  $('t-fill').style.height = `${Math.min(100, (trigFields.actuation / 300) * 100)}%`;
+  $('t-fill').style.height = `${Math.min(100, (trigFields.actuation / ACTUATION_MAX) * 100)}%`;
+  $('dz-summary').textContent = `Press ${mm(trigFields.pressDeadzone)} mm · Release ${mm(trigFields.releaseDeadzone)} mm`;
   for (const f of RANGE_FIELDS) {
     const r = $<HTMLInputElement>(`t-${f}`);
     r.value = String(trigFields[f]);
@@ -988,7 +1070,6 @@ function renderTriggerPanel() {
   $('t-separate').classList.toggle('on', state.separate);
   $<HTMLInputElement>('t-rtRelease').disabled = !state.separate;
   $<HTMLInputElement>('t-rtRelease-n').disabled = !state.separate;
-  // Rapid trigger is key mode 1 (the factory value) on, 0 off. Which mode really enables it is unverified.
   // keyMode: 0 = quick trigger off, 1 = on, 2 = on with rapid trigger
   $('t-rt').classList.toggle('on', trigFields.keyMode >= 1);
   $<HTMLButtonElement>('t-rt').disabled = !n;
@@ -1018,10 +1099,11 @@ function initTriggerControls() {
   const act = $<HTMLInputElement>('t-actuation');
   act.onchange = () => {
     const v = toUnits(act.value);
-    if (v >= 10 && v <= 400) writeTriggers({ actuation: v });
+    if (v >= ACTUATION_MIN && v <= ACTUATION_MAX) writeTriggers({ actuation: v });
+    else { toast('Actuation is 0.09–3.40 mm'); renderTriggerPanel(); }
   };
   drag($('t-bar'), (_, fy) => {
-    trigFields.actuation = Math.max(10, Math.round(fy * 300));
+    trigFields.actuation = Math.max(ACTUATION_MIN, Math.round(fy * ACTUATION_MAX));
     renderTriggerPanel();
   });
   $('t-bar').addEventListener('pointerup', () => writeTriggers({ actuation: trigFields.actuation }));
@@ -1032,16 +1114,33 @@ function initTriggerControls() {
       Object.assign(trigFields, patchFor(Number(r.value)));
       renderTriggerPanel();
     };
-    r.onchange = () => writeTriggers(patchFor(Number(r.value)));
+    // dead zones are written by the dialog's Confirm, the rest straight away
+    const commit = (v: number) => {
+      if (DEADZONE_FIELDS.has(f)) { Object.assign(trigFields, { [f]: v }); renderTriggerPanel(); } else writeTriggers(patchFor(v));
+    };
+    r.onchange = () => commit(Number(r.value));
     $<HTMLInputElement>(`t-${f}-n`).onchange = (e) => {
       const v = toUnits((e.target as HTMLInputElement).value);
-      if (v >= Number(r.min) && v <= Number(r.max)) writeTriggers(patchFor(v));
+      if (v >= Number(r.min) && v <= Number(r.max)) commit(v);
+      else { toast(`Use ${mm(Number(r.min))}–${mm(Number(r.max))} mm`); renderTriggerPanel(); }
     };
   }
   $('t-rt').onclick = () => writeTriggers({ keyMode: trigFields.keyMode >= 1 ? 0 : 1 });
   $('t-rapid').onclick = () => writeTriggers({ keyMode: trigFields.keyMode === 2 ? 1 : 2 });
   $('t-separate').onclick = () => { state.separate = !state.separate; renderTriggerPanel(); };
-  $('dz-toggle').onclick = () => ($('dz').hidden = !$('dz').hidden);
+  $('dz-toggle').onclick = () => {
+    if (!state.trigSel.size) { toast('Select keys on the keyboard first'); return; }
+    $('dz-dialog').hidden = false;
+  };
+  $('dz-ok').onclick = () => {
+    $('dz-dialog').hidden = true;
+    writeTriggers({ pressDeadzone: trigFields.pressDeadzone, releaseDeadzone: trigFields.releaseDeadzone });
+  };
+  $('dz-cancel').onclick = () => {
+    $('dz-dialog').hidden = true;
+    if (state.trigSel.size) loadTriggerFields(Math.min(...state.trigSel));
+    renderTriggerPanel();
+  };
   document.querySelectorAll<HTMLButtonElement>('#trig-views button').forEach((b) => (b.onclick = () => {
     state.trigView = b.dataset.view!;
     renderKeyboard();
@@ -1098,9 +1197,45 @@ function renderPicker() {
   p.replaceChildren(...keys);
 }
 
+function renderFuncLists() {
+  document.querySelectorAll<HTMLElement>('.funcs').forEach((box) => {
+    box.replaceChildren(...FUNC_LISTS[box.dataset.list!].map(([code, name]) => {
+      const b = el('button', 'func', name) as HTMLButtonElement;
+      b.dataset.code = code.toString(16);
+      b.title = code.toString(16).toUpperCase().padStart(6, '0');
+      b.onclick = () => assignEntry([code >> 16, (code >> 8) & 0xff, code & 0xff], name);
+      return b;
+    }));
+  });
+}
+
+// The search box filters the picker and every list by name.
 function filterPicker() {
   const q = $<HTMLInputElement>('key-search').value.trim().toLowerCase();
-  document.querySelectorAll<HTMLElement>('#picker .key').forEach((k) => k.classList.toggle('dim', !!q && !k.textContent!.toLowerCase().includes(q)));
+  document.querySelectorAll<HTMLElement>('#picker .key, .funcs .func, #macros .macro').forEach((k) =>
+    k.classList.toggle('dim', !!q && !k.textContent!.toLowerCase().includes(q)));
+}
+
+async function assignEntry(entry: number[], name: string) {
+  const i = state.selected;
+  if (i < 0) { toast('Select a key on the keyboard first'); return; }
+  if ((await call('setKeyEntry', state.profile, state.layer, i, entry)) !== null) {
+    toast(`#${i} → ${name}`);
+    state.selected = -1;
+    await loadKeys();
+  }
+}
+
+const LAYER_NAMES = ['Win Default', 'Win Fn', 'Mac Default', 'Mac Fn'];
+
+async function restoreLayer() {
+  const name = LAYER_NAMES[state.layer];
+  if (!(await confirmDialog(`Restore ${name} to the factory key map? Remaps, macros and advanced keys on this layer are cleared.`, 'Restore'))) return;
+  const keys = await call<KeyEntry[]>('restoreLayer', state.profile, state.layer);
+  if (!keys) return;
+  toast(`${name} restored`);
+  state.selected = -1;
+  await loadKeys();
 }
 
 async function assignKey(usage: number) {
@@ -1200,18 +1335,19 @@ async function saveMacro(actions: MacroAction[]) {
   }
 }
 
-// advanced keys: mod-tap, toggle and dynamic keystroke, bound on layer 1
+// advanced keys: RS, mod-tap, toggle and dynamic keystroke, bound on layer 1
 
-const ADV_TYPE: Record<AdvKind, number> = { dks: 0x90, tgl: 0x91, mt: 0x92 };
-const ADV_INFO: Record<string, [string, string, string]> = {
-  rs: ['i-rs', 'RS', 'Deeper press takes priority (not supported yet)'],
-  socd: ['i-socd', 'SOCD', 'Inputs triggered based on rules (not supported yet)'],
+const ADV_TYPE: Record<AdvKind, number> = { dks: 0x90, tgl: 0x91, mt: 0x92, rs: 0x93 };
+const ADV_INFO: Record<AdvKind, [string, string, string]> = {
+  rs: ['i-rs', 'RS', 'Deeper press takes priority'],
   dks: ['i-dks', 'Dynamic Key Press (DKS)', 'One key can perform 4 functions based on different press depths.'],
   mt: ['i-mt', 'Hold/Tap (MT)', 'One key achieves 2 functions: Hold for one, Tap for another.'],
   tgl: ['i-tgl', 'Toggle switch (TGL)', 'Click once to toggle hold, click again to release'],
 };
-const ADV_KINDS: AdvKind[] = ['mt', 'tgl', 'dks'];
-const kindOf = (e?: KeyEntry) => ADV_KINDS.find((k) => e && e.type === ADV_TYPE[k]);
+// the vendor's order
+const ADV_ORDER: AdvKind[] = ['rs', 'dks', 'mt', 'tgl'];
+const ADV_LIMIT = 40;
+const kindOf = (e?: KeyEntry) => ADV_ORDER.find((k) => e && e.type === ADV_TYPE[k]);
 
 // Target keys are stored as [0x10, 0, usage]; modifiers as a bit in code1, like the keymap.
 function toRef(usage: number): KeyRef {
@@ -1244,41 +1380,73 @@ function formRow(label: string, ...controls: HTMLElement[]) {
   return f;
 }
 
+// Slots a kind already uses. RS pairs live in the MT slots, one slot per key of the pair.
+function usedSlots(kind: AdvKind): Set<number> {
+  const kinds = kind === 'mt' || kind === 'rs' ? ['mt', 'rs'] : [kind];
+  return new Set(state.base.filter((b) => kinds.includes(kindOf(b) ?? '')).map((b) => b.code1));
+}
+
 // The slot a key uses: its own if it is already bound to this kind, otherwise the first slot no key uses.
 function slotFor(kind: AdvKind, key: number): number {
   const e = state.base[key];
-  if (kindOf(e) === kind) return e.code1;
-  const used = new Set(state.base.filter((b) => kindOf(b) === kind).map((b) => b.code1));
-  for (let s = 0; s < 32; s++) if (!used.has(s)) return s;
+  if (kindOf(e) === kind) return kind === 'rs' ? e.code1 & ~1 : e.code1;
+  const used = usedSlots(kind);
+  // RS takes two slots in a row, s for key 1 and s + 1 for key 2
+  const step = kind === 'rs' ? 2 : 1;
+  for (let s = 0; s + step <= 32; s += step) if (!used.has(s) && (step === 1 || !used.has(s + 1))) return s;
   return -1;
 }
 
+// An RS key stores its partner's matrix index in code2; the key with the even slot is key 1.
+function rsPair(i: number): [number, number] {
+  const e = state.base[i];
+  return e.code1 % 2 === 0 ? [i, e.code2] : [e.code2, i];
+}
+
 function selectAdvKey(i: number) {
-  state.advKey = state.advKey === i ? -1 : i;
   const k = kindOf(state.base[i]);
-  if (k) state.advKind = k;
+  if (state.advKind === 'rs' && !k && state.advKey >= 0 && state.rsPick === 1 && state.rsKey2 >= 0) {
+    // Bind Key1 was chosen again: replace key 1, keep key 2
+    if (i !== state.rsKey2) state.advKey = i;
+    state.rsPick = 2;
+  } else if (state.advKind === 'rs' && !k && state.advKey >= 0 && state.rsPick === 2) {
+    // second click while editing RS picks key 2
+    if (i !== state.advKey) state.rsKey2 = i;
+    state.rsPick = 1;
+  } else if (k === 'rs') {
+    state.advKind = 'rs';
+    [state.advKey, state.rsKey2] = rsPair(i);
+  } else {
+    state.advKey = state.advKey === i ? -1 : i;
+    state.rsKey2 = -1;
+    state.rsPick = 2;
+    if (k) state.advKind = k;
+  }
   renderKeyboard();
   renderAdvanced();
 }
 
 function renderAdvanced() {
-  $('adv-kinds').replaceChildren(...['rs', 'socd', 'dks', 'mt', 'tgl'].map((k) => {
+  $('adv-kinds').replaceChildren(...ADV_ORDER.map((k) => {
     const [ic, title, desc] = ADV_INFO[k];
     const b = el('button', 'adv-kind' + (k === state.advKind ? ' on' : '')) as HTMLButtonElement;
     b.dataset.kind = k;
     b.append(icon(ic), el('b', '', title), el('small', '', desc));
-    if (k === 'rs' || k === 'socd') b.disabled = true;
-    else b.onclick = () => { state.advKind = k as AdvKind; renderAdvanced(); };
+    b.onclick = () => { state.advKind = k; state.advKey = -1; state.rsKey2 = -1; renderKeyboard(); renderAdvanced(); };
     return b;
   }));
 
-  const bound = state.base.map((e, i) => ({ e, i, k: kindOf(e) })).filter((b) => b.k && b.i < LAYOUT.length);
-  $('adv-count').textContent = `${bound.length}/96`;
+  // an RS pair counts once, listed on its key 1
+  const bound = state.base.map((e, i) => ({ e, i, k: kindOf(e) }))
+    .filter((b) => b.k && b.i < LAYOUT.length && !(b.k === 'rs' && b.e.code1 % 2 === 1));
+  $('adv-count').textContent = `${bound.length}/${ADV_LIMIT}`;
   $('adv-list').replaceChildren(...bound.map(({ e, i, k }) => {
     const row = el('div', 'adv-item');
-    row.append(el('b', '', `${k!.toUpperCase()}${e.code1 + 1}`), el('span', 'n', `${capLabel(LAYOUT[i][3])} · #${i}`));
+    const what = k === 'rs' ? `${capLabel(LAYOUT[i][3])} + ${capLabel(LAYOUT[e.code2]?.[3] ?? 0)}` : `${capLabel(LAYOUT[i][3])} · #${i}`;
+    const n = k === 'rs' ? e.code1 / 2 + 1 : e.code1 + 1;
+    row.append(el('b', '', `${k!.toUpperCase()}${n}`), el('span', 'n', what));
     const edit = el('button', '', 'Edit');
-    edit.onclick = () => { state.advKind = k!; state.advKey = i; renderKeyboard(); renderAdvanced(); };
+    edit.onclick = () => selectAdvKey(i);
     row.append(edit);
     return row;
   }));
@@ -1308,6 +1476,12 @@ function renderAdvEditor() {
     return;
   }
   $('adv-title').textContent = ADV_INFO[kind][1];
+  const boundKinds = state.base.filter((e, i) => kindOf(e) && i < LAYOUT.length && !(kindOf(e) === 'rs' && e.code1 % 2)).length;
+  if (!kindOf(state.base[key]) && boundKinds >= ADV_LIMIT) {
+    ed.replaceChildren(el('div', 'empty-txt', `All ${ADV_LIMIT} bindings are in use. Unbind one first.`));
+    return;
+  }
+  if (kind === 'rs') { renderRsEditor(ed); return; }
   const slot = slotFor(kind, key);
   if (slot < 0) {
     ed.replaceChildren(el('div', 'empty-txt', `All 32 ${kind.toUpperCase()} slots are in use.`));
@@ -1334,20 +1508,7 @@ function renderAdvEditor() {
   } else if (kind === 'tgl') {
     parts.push(formRow('Key', keySelect('adv-tgl', fromRef(state.adv.tgl[slot]))));
   } else {
-    const s = state.adv.dks[slot];
-    parts.push(el('div', 'empty-txt', 'Trigger points and phase bits are shown raw: their units are not confirmed.'));
-    s.points.forEach((p, i) => {
-      const inp = el('input') as HTMLInputElement;
-      inp.id = `adv-pt${i}`;
-      inp.value = String(p);
-      parts.push(formRow(`Point ${i + 1}`, inp));
-    });
-    s.keys.forEach((k, i) => {
-      const ph = el('input', 'ph') as HTMLInputElement;
-      ph.id = `adv-ph${i}`;
-      ph.value = '0x' + k.phases.toString(16).padStart(4, '0');
-      parts.push(formRow(`Key ${i + 1}`, keySelect(`adv-k${i}`, fromRef(k.key)), ph));
-    });
+    parts.push(dksEditor(state.adv.dks[slot]));
   }
   const actions = el('div', 'actions');
   const save = el('button', 'primary-btn', 'Save and bind') as HTMLButtonElement;
@@ -1365,6 +1526,93 @@ function renderAdvEditor() {
   ed.replaceChildren(...parts);
 }
 
+// DKS: four trigger points (0.01 mm) and, for each of the four keys, one phase bit per stage of the press:
+// pressing past point 1, bottoming out, leaving the bottom, releasing past point 1.
+const DKS_STAGES = ['Press', 'Bottom', 'Lift', 'Release'];
+
+function dksEditor(s: DksSlot) {
+  const box = el('div', 'dks');
+  const pts = el('div', 'dks-points');
+  s.points.forEach((p, i) => {
+    const inp = el('input', 'num-box') as HTMLInputElement;
+    inp.id = `adv-pt${i}`;
+    inp.value = mm(p);
+    pts.append(formRow(`Point ${i + 1}`, inp, el('span', '', 'mm')));
+  });
+  const grid = el('div', 'dks-grid');
+  grid.append(el('span'), ...DKS_STAGES.map((t) => el('span', 'dks-stage', t)));
+  s.keys.forEach((k, i) => {
+    grid.append(keySelect(`adv-k${i}`, fromRef(k.key)));
+    DKS_STAGES.forEach((_, st) => {
+      const b = el('button', 'dks-cell' + (k.phases & (1 << st) ? ' on' : '')) as HTMLButtonElement;
+      b.dataset.key = String(i);
+      b.dataset.stage = String(st);
+      b.onclick = () => b.classList.toggle('on');
+      grid.append(b);
+    });
+  });
+  box.append(pts, grid);
+  return box;
+}
+
+function dksFromEditor(): DksSlot {
+  const phases = [0, 0, 0, 0];
+  document.querySelectorAll<HTMLElement>('.dks-cell.on').forEach((c) => (phases[Number(c.dataset.key)] |= 1 << Number(c.dataset.stage)));
+  return {
+    points: [0, 1, 2, 3].map((p) => Math.max(0, Math.min(255, toUnits($<HTMLInputElement>(`adv-pt${p}`).value) || 0))),
+    keys: [0, 1, 2, 3].map((k) => ({ key: toRef(num(`adv-k${k}`)), phases: phases[k] })),
+  };
+}
+
+// RS: pick key 1 and key 2 on the keyboard; the deeper-pressed of the two wins.
+function renderRsEditor(ed: HTMLElement) {
+  const k1 = state.advKey;
+  const k2 = state.rsKey2;
+  const pick = (n: 1 | 2, key: number) => {
+    const b = el('button', 'outline-btn rs-pick' + (state.rsPick === n ? ' on' : '')) as HTMLButtonElement;
+    b.id = `rs-key${n}`;
+    b.append(`Bind Key${n}: `, el('b', '', key >= 0 ? capLabel(LAYOUT[key][3]) : 'click a key'));
+    b.onclick = () => { state.rsPick = n; renderAdvEditor(); };
+    return b;
+  };
+  const parts: HTMLElement[] = [
+    el('div', 'empty-txt', 'Press either key: the one pressed deeper is sent. Click a Bind button, then a key on the keyboard.'),
+    pick(1, k1), pick(2, k2),
+  ];
+  const actions = el('div', 'actions');
+  const save = el('button', 'primary-btn', 'Save and bind') as HTMLButtonElement;
+  save.id = 'adv-save';
+  save.disabled = !state.writes.keymap || k1 < 0 || k2 < 0;
+  save.onclick = () => saveRs(k1, k2);
+  actions.append(save);
+  if (kindOf(state.base[k1]) === 'rs') {
+    const unbind = el('button', 'white-btn', 'Unbind') as HTMLButtonElement;
+    unbind.id = 'adv-unbind';
+    unbind.onclick = async () => { await unbindAdvanced(k1, false); await unbindAdvanced(k2); };
+    actions.append(unbind);
+  }
+  parts.push(actions);
+  ed.replaceChildren(...parts);
+}
+
+// The entry a key sends by default: its factory function on layer 1.
+const defaultEntry = (key: number): KeyRef => (LAYOUT[key][3] === 0xff ? [0xf0, 0xff, 0x09] : toRef(LAYOUT[key][3]));
+
+async function saveRs(k1: number, k2: number) {
+  const s = slotFor('rs', k1);
+  if (s < 0) { toast('No free slots for RS'); return; }
+  const a = state.adv!;
+  const slots = a.mt.map((m, i) => (i === s ? { tap: defaultEntry(k1), hold: defaultEntry(k2) }
+    : i === s + 1 ? { tap: defaultEntry(k2), hold: defaultEntry(k1) } : m));
+  const next = await call<Advanced>('setAdvanced', state.profile, 'mt', slots);
+  if (!next) return;
+  state.adv = next;
+  if ((await call('setKeyEntry', state.profile, 0, k1, [0x93, s, k2])) === null) return;
+  if ((await call('setKeyEntry', state.profile, 0, k2, [0x93, s + 1, k1])) === null) return;
+  toast(`RS${s / 2 + 1}: ${capLabel(LAYOUT[k1][3])} + ${capLabel(LAYOUT[k2][3])}`);
+  await reloadBase();
+}
+
 const num = (id: string) => Number($<HTMLInputElement>(id).value) || 0;
 
 async function saveAdvanced(kind: AdvKind, key: number, slot: number) {
@@ -1372,10 +1620,7 @@ async function saveAdvanced(kind: AdvKind, key: number, slot: number) {
   let slots: unknown[];
   if (kind === 'mt') slots = a.mt.map((s, i) => (i === slot ? { tap: toRef(num('adv-tap')), hold: toRef(num('adv-hold')) } : s));
   else if (kind === 'tgl') slots = a.tgl.map((s, i) => (i === slot ? toRef(num('adv-tgl')) : s));
-  else slots = a.dks.map((s, i) => (i === slot ? {
-    points: [0, 1, 2, 3].map((p) => num(`adv-pt${p}`) & 0xff),
-    keys: [0, 1, 2, 3].map((k) => ({ key: toRef(num(`adv-k${k}`)), phases: num(`adv-ph${k}`) & 0xffff })),
-  } : s));
+  else slots = a.dks.map((s, i) => (i === slot ? dksFromEditor() : s));
   const next = await call<Advanced>('setAdvanced', state.profile, kind, slots);
   if (!next) return;
   state.adv = next;
@@ -1387,12 +1632,10 @@ async function saveAdvanced(kind: AdvKind, key: number, slot: number) {
 }
 
 // Unbinding puts the key's factory function back.
-async function unbindAdvanced(key: number) {
-  const def = LAYOUT[key][3];
-  const entry = def === 0xff ? [0xf0, 0xff, 0x09] : [...toRef(def)];
-  if ((await call('setKeyEntry', state.profile, 0, key, entry)) === null) return;
-  toast(`${capLabel(def)} back to default`);
-  await reloadBase();
+async function unbindAdvanced(key: number, reload = true) {
+  if ((await call('setKeyEntry', state.profile, 0, key, [...defaultEntry(key)])) === null) return;
+  toast(`${capLabel(LAYOUT[key][3])} back to default`);
+  if (reload) await reloadBase();
 }
 
 async function reloadBase() {
@@ -1487,6 +1730,7 @@ initPerformanceControls();
 initTriggerControls();
 initSidebar();
 renderPicker();
+renderFuncLists();
 renderPhotoKeyboard();
 renderKeyboard();
 renderTriggerPanel();

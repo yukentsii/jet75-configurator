@@ -66,7 +66,6 @@
     <symbol id="e-kfire" viewBox="0 0 24 24"><rect x="4" y="13" width="8" height="7" rx="1.5"/><path d="M16 4v4M14 6h4M19 10l1.5 1.5M13.5 9.5 12 8"/></symbol>
     <symbol id="e-beam" viewBox="0 0 24 24"><path d="M5 4v16M19 4v16M9 12h6M12 6v12"/></symbol>
     <symbol id="i-rs"viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><circle cx="9" cy="17" r="3"/><circle cx="15" cy="17" r="3"/></symbol>
-    <symbol id="i-socd" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M9 9l-3 3 3 3M15 9l3 3-3 3"/></symbol>
     <symbol id="i-dks" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="11" rx="1.5"/><path d="M6 19h12M7 8v4M10 8l2 4 2-4M17 8l-2 2 2 2"/></symbol>
     <symbol id="i-mt" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="10" rx="1.5"/><path d="M7 11V7l2 2.5L11 7v4M14 7h4M16 7v4"/><rect x="3" y="16" width="8" height="4" rx="1"/><rect x="13" y="16" width="8" height="4" rx="1"/></symbol>
     <symbol id="i-tgl" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="9" rx="1.5"/><path d="M7 6h4M9 6v4M13 6v4h2"/><rect x="4" y="14" width="16" height="7" rx="3.5"/><circle cx="8" cy="17.5" r="1.8"/></symbol>
@@ -133,8 +132,8 @@
       <section class="panel cols3" data-panel="lighting">
         <div class="col">
           <div class="col-head">Lighting effects<span class="spacer"></span><button class="switch on" id="light-on" aria-label="lighting on"></button></div>
-          <div class="seg"><button class="on">Backlight</button><button disabled>LOGO Light</button></div>
-          <div class="chips"><button class="on">Normal light</button><button disabled>Custom</button><button disabled>Cloud</button></div>
+          <div class="seg" id="light-zone"><button data-zone="back" class="on">Backlight</button><button data-zone="logo">LOGO Light</button></div>
+          <div class="chips"><button class="on">Normal light</button></div>
           <div class="effects" id="effects"></div>
         </div>
         <div class="col">
@@ -147,9 +146,13 @@
             <div class="lbl">brightness</div>
             <div class="slider-row"><input type="range" class="range" id="brightness" min="0" max="100" step="1"><span class="val" id="brightness-v"></span></div>
           </div>
+          <div class="slider-block" id="direction-block" hidden>
+            <div class="lbl">direction</div>
+            <div class="seg" id="direction"><button data-dir="0">Left to Right</button><button data-dir="1">Right to Left</button></div>
+          </div>
         </div>
         <div class="col">
-          <div class="col-head">Color palette<span class="spacer"></span><button class="switch" id="custom-color" disabled aria-label="custom colour"></button></div>
+          <div class="col-head">Color palette<span class="spacer"></span><button class="switch" id="custom-color" aria-label="custom colour"></button></div>
           <div class="picker">
             <div class="sv" id="sv"><span class="dot" id="sv-dot"></span></div>
             <div class="hue" id="hue"><span class="dot" id="hue-dot"></span></div>
@@ -165,19 +168,13 @@
       <section class="panel cols3" data-panel="trigger" hidden>
         <div class="col">
           <div class="col-head two">Set Actuation Distance<small>Set actuation point for selected keys</small></div>
-          <div class="switch-row">
-            <span class="sel-lbl">Select<br>Switch</span>
-            <div class="select-box disabled"><span class="tri"></span>Default Option<svg class="ic"><use href="#i-chev"/></svg></div>
-            <svg class="ic help"><use href="#i-help"/></svg>
-            <button class="outline-btn" disabled>Start<br>Calibration</button>
-          </div>
           <div class="travel">
             <svg class="switch-art" viewBox="0 0 120 140" aria-hidden="true">
               <path d="M40 8h40v22H40zM48 8V2h24v6M30 30h60v14H30zM22 44h76v50H22zM34 94h52v14H34zM56 108v26M64 108v26"/>
               <path d="M38 54h44M38 64h44M38 74h44M38 84h44"/>
             </svg>
             <div class="gauge">
-              <div class="ticks"><span>0.00</span><span>0.50</span><span>1.00</span><span>1.50</span><span>2.00</span><span>2.50</span><span>3.00</span></div>
+              <div class="ticks"><span>0.09</span><span>0.50</span><span>1.00</span><span>1.50</span><span>2.00</span><span>2.50</span><span>3.00</span><span>3.40</span></div>
               <div class="bar" id="t-bar"><div class="fill" id="t-fill"></div></div>
               <div class="chip-val" id="t-chip"><input id="t-actuation" class="chip-in" inputmode="decimal">mm<svg class="ic"><use href="#i-edit"/></svg></div>
             </div>
@@ -187,11 +184,11 @@
           <div class="col-head two rt-head"><span>Quick Trigger (RT)</span><small>Dynamically adjust the actuation point for instant <b>trigger and reset</b></small><button class="switch" id="t-rt" aria-label="quick trigger"></button></div>
           <div class="rt-block">
             <div class="rt-lbl">Press Sensitivity (Trigger)</div>
-            <div class="rt-row"><span>High</span><input type="range" class="range" id="t-rtPress" min="1" max="250" step="1"><input class="num-box" id="t-rtPress-n"><span>Low</span></div>
+            <div class="rt-row"><span>High</span><input type="range" class="range" id="t-rtPress" min="2" max="340" step="1"><input class="num-box" id="t-rtPress-n"><span>Low</span></div>
           </div>
           <div class="rt-block">
             <div class="rt-lbl">Release Sensitivity (Reset)</div>
-            <div class="rt-row"><span>High</span><input type="range" class="range" id="t-rtRelease" min="1" max="250" step="1"><input class="num-box" id="t-rtRelease-n"><span>Low</span></div>
+            <div class="rt-row"><span>High</span><input type="range" class="range" id="t-rtRelease" min="2" max="340" step="1"><input class="num-box" id="t-rtRelease-n"><span>Low</span></div>
           </div>
           <div class="opt-row">
             <div><b>Separate press and release settings</b><small>Set different sensitivity values for <b>key press</b> (trigger) and <b>release</b> (reset).</small></div>
@@ -204,20 +201,7 @@
         </div>
         <div class="col">
           <div class="col-head two">Advanced Settings<small>Customize key dead zone and sensitivity precision</small></div>
-          <div class="opt-row line"><b>Dead Zone Settings</b><button class="text-btn" id="dz-toggle"><svg class="ic"><use href="#i-gear"/></svg>Set up</button></div>
-          <div class="dz" id="dz" hidden>
-            <div class="rt-block">
-              <div class="lbl">Press dead zone</div>
-              <div class="rt-row"><input type="range" class="range" id="t-pressDeadzone" min="0" max="127" step="1"><input class="num-box" id="t-pressDeadzone-n"><span>mm</span></div>
-            </div>
-            <div class="rt-block">
-              <div class="lbl">Release dead zone</div>
-              <div class="rt-row"><input type="range" class="range" id="t-releaseDeadzone" min="0" max="127" step="1"><input class="num-box" id="t-releaseDeadzone-n"><span>mm</span></div>
-            </div>
-          </div>
-          <div class="opt-row"><div><b>Berserk Mode <svg class="ic sm"><use href="#i-help"/></svg></b><small>Not supported yet: the switch for this mode has not been confirmed.</small></div><button class="switch" disabled aria-label="berserk mode"></button></div>
-          <div class="prec"><span>RT Press Precision</span><label><i></i>0.01mm</label><label><i></i>0.005mm</label></div>
-          <div class="prec"><span>RT Release Precision</span><label><i></i>0.01mm</label><label><i></i>0.005mm</label></div>
+          <div class="opt-row line"><div><b>Dead Zone Settings</b><small id="dz-summary"></small></div><button class="text-btn" id="dz-toggle"><svg class="ic"><use href="#i-gear"/></svg>Set up</button></div>
           <p class="note" id="trig-count">No keys selected</p>
         </div>
       </section>
@@ -227,10 +211,10 @@
         <div class="subbar">
           <div class="subtabs" id="key-subtabs">
             <button data-sub="basic" class="on">Basic</button>
-            <button disabled>Mouse</button>
-            <button disabled>Media</button>
-            <button disabled>Lighting</button>
-            <button disabled>Extended Func</button>
+            <button data-sub="mouse">Mouse</button>
+            <button data-sub="media">Media</button>
+            <button data-sub="lighting">Lighting</button>
+            <button data-sub="ext">Extended Func</button>
             <button data-sub="macros">Shortcut Record</button>
           </div>
           <span class="spacer"></span>
@@ -242,6 +226,10 @@
             <div class="picker-kbd" id="picker"></div>
           </div>
         </div>
+        <div class="sub func-sub" data-sub-panel="mouse" hidden><div class="hint">Drag or click the command to the target key to assign.</div><div class="funcs" data-list="mouse"></div></div>
+        <div class="sub func-sub" data-sub-panel="media" hidden><div class="hint">Drag or click the command to the target key to assign.</div><div class="funcs" data-list="media"></div></div>
+        <div class="sub func-sub" data-sub-panel="lighting" hidden><div class="hint">Drag or click the command to the target key to assign.</div><div class="funcs" data-list="lighting"></div></div>
+        <div class="sub func-sub" data-sub-panel="ext" hidden><div class="hint">Drag or click the command to the target key to assign.</div><div class="funcs" data-list="ext"></div></div>
         <div class="sub" data-sub-panel="macros" hidden>
           <div class="hint">Drag or click the command to the target key to assign.</div>
           <div class="macros" id="macros"></div>
@@ -263,7 +251,7 @@
           <div class="adv-kinds" id="adv-kinds"></div>
         </div>
         <div class="col">
-          <div class="col-head">Current Binding <span id="adv-count">0/96</span></div>
+          <div class="col-head">Current Binding <span id="adv-count">0/40</span></div>
           <div class="adv-list" id="adv-list"></div>
         </div>
         <div class="col">
@@ -322,6 +310,20 @@
         </div>
       </section>
     </main>
+  </div>
+  <div class="overlay" id="dz-dialog" hidden>
+    <div class="dialog" role="dialog" aria-modal="true">
+      <div class="dialog-head"><b>Dead Zone Settings</b></div>
+      <div class="rt-block">
+        <div class="lbl">Press dead zone</div>
+        <div class="rt-row"><input type="range" class="range" id="t-pressDeadzone" min="0" max="127" step="1"><input class="num-box" id="t-pressDeadzone-n"><span>mm</span></div>
+      </div>
+      <div class="rt-block">
+        <div class="lbl">Release dead zone</div>
+        <div class="rt-row"><input type="range" class="range" id="t-releaseDeadzone" min="0" max="127" step="1"><input class="num-box" id="t-releaseDeadzone-n"><span>mm</span></div>
+      </div>
+      <div class="dialog-btns center"><button class="primary-btn" id="dz-ok">Confirm</button><button class="white-btn" id="dz-cancel">Cancel</button></div>
+    </div>
   </div>
   <div class="overlay" id="confirm" hidden>
     <div class="dialog" role="dialog" aria-modal="true">

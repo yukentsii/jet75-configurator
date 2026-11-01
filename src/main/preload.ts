@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('jet75', {
   advanced: call('advanced'),
   setAdvanced: call('setAdvanced'),
   setKeyEntry: call('setKeyEntry'),
+  restoreLayer: call('restoreLayer'),
   presets: call('presets'),
   applyPreset: call('applyPreset'),
   profileNames: call('profileNames'),

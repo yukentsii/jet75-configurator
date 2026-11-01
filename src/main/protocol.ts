@@ -94,6 +94,7 @@ export interface Lighting {
   sideBrightness: number;
   sideSpeed: number;
   sideColor: string;
+  sideCustomColorDisabled: boolean;
   reportRateIndex: number;
 }
 
@@ -112,11 +113,13 @@ export function parseLighting(e: number[]): Lighting {
     sideBrightness: e[25],
     sideSpeed: 4 - e[26],
     sideColor: hex(e[29], e[30], e[31]),
+    sideCustomColorDisabled: e[27] === 1,
     reportRateIndex: e[4] & 0x0f,
   };
 }
 
-export type LightingPatch = Partial<Pick<Lighting, 'effect' | 'brightness' | 'speed' | 'color'>>;
+export type LightingPatch = Partial<Pick<Lighting, 'effect' | 'brightness' | 'speed' | 'color' | 'direction' | 'customColorDisabled'
+  | 'sideEffect' | 'sideBrightness' | 'sideSpeed' | 'sideColor' | 'sideCustomColorDisabled'>>;
 
 // Applies a patch to a copy of the 64-byte block; untouched bytes stay as read.
 export function applyLighting(block: number[], p: LightingPatch): number[] {
@@ -125,14 +128,22 @@ export function applyLighting(block: number[], p: LightingPatch): number[] {
   if (p.effect != null) e[8] = byte(p.effect);
   if (p.brightness != null) e[9] = byte(p.brightness);
   if (p.speed != null) e[10] = 4 - Math.max(0, Math.min(4, Math.round(p.speed)));
-  if (p.color) {
-    const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(p.color);
+  if (p.direction != null) e[11] = byte(p.direction);
+  // picking a colour turns custom colour on, like the vendor's palette
+  const rgb = (c: string, at: number, flag: number) => {
+    const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(c);
     if (!m) throw new Error('colour must be #rrggbb');
-    e[12] = 0;
-    e[14] = parseInt(m[1], 16);
-    e[15] = parseInt(m[2], 16);
-    e[16] = parseInt(m[3], 16);
-  }
+    e[flag] = 0;
+    for (let i = 0; i < 3; i++) e[at + i] = parseInt(m[i + 1], 16);
+  };
+  if (p.color) rgb(p.color, 14, 12);
+  if (p.customColorDisabled != null) e[12] = p.customColorDisabled ? 1 : 0;
+  // LOGO (side) light: bytes 24 effect, 25 brightness, 26 = 4 - speed, 27 custom colour off, 29-31 colour
+  if (p.sideEffect != null) e[24] = byte(p.sideEffect);
+  if (p.sideBrightness != null) e[25] = byte(p.sideBrightness);
+  if (p.sideSpeed != null) e[26] = 4 - Math.max(0, Math.min(4, Math.round(p.sideSpeed)));
+  if (p.sideColor) rgb(p.sideColor, 29, 27);
+  if (p.sideCustomColorDisabled != null) e[27] = p.sideCustomColorDisabled ? 1 : 0;
   return e;
 }
 

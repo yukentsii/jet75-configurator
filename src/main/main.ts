@@ -89,6 +89,7 @@ handle('setAdvanced', async (profile: number, kind: 'dks' | 'mt' | 'tgl', slots:
   else await d.setTgl(profile, slots);
   return d.advanced(profile);
 });
+handle('restoreLayer', async (profile: number, layer: number) => (await device()).restoreLayer(profile, layer));
 handle('setKeyEntry', async (profile: number, layer: number, index: number, entry: number[]) =>
   (await device()).setKeyEntry(profile, layer, index, entry));
 

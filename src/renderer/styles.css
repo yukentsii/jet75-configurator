@@ -448,3 +448,29 @@ html.dark .overlay { background: rgba(0,0,0,.55); }
 .file-row .white-btn { display: inline-flex; align-items: center; gap: 6px; min-width: 0; padding: 0 14px; }
 .file-row .muted { font-size: 12px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .side-head .muted { margin-left: 4px; font-weight: 400; color: var(--text-secondary); }
+
+/* Key Config lists (mouse, media, lighting, extended): buttons in rows, like the vendor's */
+.func-sub { padding: 0 24px 24px; }
+.funcs { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 8px; }
+.func {
+  height: 40px; padding: 0 12px; text-align: left; border: 1px solid transparent; border-radius: 4px;
+  background: var(--btn-secondary-bg); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.func:hover { border-color: var(--accent-line); }
+.dim { opacity: .25; }
+
+/* lighting direction */
+#direction-block .seg button { min-width: 112px; }
+
+/* DKS editor: trigger points, then keys × stages */
+.dks { display: grid; gap: 16px; }
+.dks-points { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
+.dks-points .num-box { width: 64px; height: 32px; flex: none; }
+.dks-grid { display: grid; grid-template-columns: minmax(0, 1fr) repeat(4, 44px); gap: 6px; align-items: center; }
+.dks-stage { font-size: 12px; color: var(--text-secondary); text-align: center; }
+.dks-cell { height: 28px; border: 1px solid var(--border-card); border-radius: 4px; background: var(--bg-card); }
+.dks-cell.on { background: var(--accent); border-color: var(--accent); }
+
+/* RS key pickers */
+.rs-pick { justify-content: flex-start; width: 100%; padding: 0 12px; }
+.rs-pick b { margin-left: 4px; }
