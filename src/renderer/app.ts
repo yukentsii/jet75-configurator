@@ -1603,6 +1603,9 @@ function initTriggerControls() {
     $('sw-menu').hidden = !$('sw-menu').hidden;
   };
   $('sw-search').oninput = renderSwitches;
+  $('cal-start').onclick = () => calibration('start');
+  $('cal-finish').onclick = () => calibration('stop');
+  $('cal-restart').onclick = () => calibration('restart');
   $('sw-menu').onclick = (e) => e.stopPropagation();
   document.addEventListener('click', () => ($('sw-menu').hidden = true));
   // Berserk Mode (funcConfig byte 7 bit 0) unlocks the 0.005 mm RT precision
@@ -2184,13 +2187,42 @@ async function setTravel(on: boolean) {
   if (!on) { state.travel = []; paintTravel(); }
 }
 
+// calibration view: live travel per key, and a key is done once its calibration state changes
+const cal = { open: false, first: new Map<number, number>(), done: new Set<number>() };
+
+function renderCalibration() {
+  const board = $('cal-kbd');
+  sizeBoard(board);
+  board.replaceChildren(...LAYOUT.map(([x, y, w, def], i) => {
+    const k = el('span', 'key' + (cal.done.has(i) ? ' done' : ''), capLabel(def));
+    k.dataset.index = String(i);
+    placeKey(k, x, y, w);
+    k.style.setProperty('--travel', `${Math.min(100, ((state.travel[i] ?? 0) / TRAVEL_FULL) * 100)}%`);
+    return k;
+  }));
+  $('cal-count').textContent = `${cal.done.size}/${LAYOUT.length}`;
+}
+
+async function calibration(action: 'start' | 'stop' | 'restart') {
+  if (action !== 'stop') { cal.first.clear(); cal.done.clear(); state.travel = []; }
+  const r = await call<boolean>('calibration', action);
+  cal.open = action !== 'stop' && r === true;
+  $('cal-view').hidden = !cal.open;
+  if (cal.open) renderCalibration();
+  else if (action === 'stop' && r !== null) toast('Calibration finished');
+}
+
 let travelFrame = 0;
 function onTravel(r: { entry: number[]; travel: number; state: number }) {
   const i = ENTRY_INDEX.get(r.entry.join());
   if (i == null) return;
+  if (cal.open) {
+    if (!cal.first.has(i)) cal.first.set(i, r.state);
+    else if (r.state !== cal.first.get(i)) cal.done.add(i);
+  }
   state.travel[i] = r.travel;
   dksTest(i, r.travel);
-  if (!travelFrame) travelFrame = requestAnimationFrame(() => { travelFrame = 0; paintTravel(); });
+  if (!travelFrame) travelFrame = requestAnimationFrame(() => { travelFrame = 0; paintTravel(); if (cal.open) renderCalibration(); });
 }
 
 // Fills each key from the bottom with its travel; only in the Trigger tab's Preview display.

@@ -262,6 +262,19 @@ export async function runUiTest(win: BrowserWindow, getDevice: () => Promise<Jet
   const debugOff = (await kb.performance(profile)).debug;
   check('ui debug mode on in Trigger tab, off after leaving', debugOn && !debugOff);
 
+  // calibration: start, then finish straight away (no key presses, never Restart)
+  await click('[data-tab="trigger"]');
+  await wait(800);
+  await click('#cal-start');
+  await wait(1500);
+  const calOpen = !(await js(`document.getElementById('cal-view').hidden`));
+  await click('#cal-finish');
+  await wait(1000);
+  check('ui calibration starts and finishes', calOpen && (await js(`document.getElementById('cal-view').hidden`)) &&
+    (await js(`document.getElementById('error').hidden`)));
+  await click('[data-tab="lighting"]');
+  await wait(800);
+
   // SOCD: W (#1) + S (#16), Absolute Priority (Key 2), then Delete frees everything
   const socdMt = await kb.rawRegion(0xa4, 256 * profile, 256);
   const socdTrig = await kb.rawRegion(0xa0, 1024 * profile, 1024);

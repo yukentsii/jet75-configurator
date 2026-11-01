@@ -367,6 +367,17 @@ export class Jet75 {
     return this.keyColors(profile);
   }
 
+  // Calibration: 'start' (0xA8), 'stop' (0xA9), 'restart' (0xA9, 0xB1, 0xA8).
+  async calibration(action: 'start' | 'stop' | 'restart') {
+    if (action === 'restart') {
+      await this.write(P.Cmd.calStop, 0, [0]);
+      await this.write(P.Cmd.calClear, 0, [0]);
+      await this.write(P.Cmd.calStart, 0, [0]);
+    } else {
+      await this.write(action === 'start' ? P.Cmd.calStart : P.Cmd.calStop, 0, [0]);
+    }
+  }
+
   // One live frame: 384 bytes, RGB per key index.
   stream(frame: number[]) {
     return this.write(P.Cmd.stream, 0, frame.slice(0, 3 * P.KEY_COUNT).map((b) => b & 0xff));

@@ -43,6 +43,11 @@ export const Cmd = {
   setTgl: 0xa7,
   // live lighting: 3 bytes RGB per key index; shown while frames keep coming, the saved effect returns ~3 s after the last
   stream: 0xdd,
+  // Calibration: start (keys then report their travel and calibration state), end, and clear before a restart.
+  // The vendor's app sends calStop on every connect.
+  calStart: 0xa8,
+  calStop: 0xa9,
+  calClear: 0xb1,
 } as const;
 
 export const READ_CMDS = new Set<number>([
@@ -55,6 +60,7 @@ export const READ_CMDS = new Set<number>([
 export const CONFIRMED_WRITES = new Set<number>([
   Cmd.setFuncConfig, Cmd.setKeyMatrix, Cmd.setBase, Cmd.setMacros,
   Cmd.setTrigger, Cmd.setDks, Cmd.setMt, Cmd.setTgl, Cmd.setCustom, Cmd.reset, Cmd.setKeyColors, Cmd.stream,
+  Cmd.calStart, Cmd.calStop, Cmd.calClear,
 ]);
 
 // Per-key colours of the Custom effect (effect 0): 512 bytes per profile, RGB per matrix index.

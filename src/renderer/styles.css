@@ -523,3 +523,10 @@ html.dark .overlay { background: rgba(0,0,0,.55); }
 .socd-opt small { grid-column: 2; color: var(--text-secondary); font-size: 12px; }
 .socd-opt.on { border-color: var(--accent-line); }
 .test-box div { line-height: 18px; }
+
+/* calibration view */
+.cal-dialog { width: auto; }
+.cal-hint { font-size: 14px; color: var(--text-secondary); }
+.cal-kbd { margin: 0 auto 24px; }
+.cal-kbd .key { cursor: default; }
+.cal-kbd .key.done { border-color: var(--accent); background-color: var(--accent); color: var(--accent-text); }

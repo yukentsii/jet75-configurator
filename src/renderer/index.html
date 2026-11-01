@@ -200,6 +200,7 @@
                 <div id="sw-list"></div>
               </div>
             </div>
+            <button class="outline-btn" id="cal-start">Start<br>Calibration</button>
           </div>
           <div class="travel">
             <svg class="switch-art" viewBox="0 0 120 140" aria-hidden="true">
@@ -359,6 +360,14 @@
         <div class="rt-row"><input type="range" class="range" id="t-releaseDeadzone" min="0" max="127" step="1"><input class="num-box" id="t-releaseDeadzone-n"><span>mm</span></div>
       </div>
       <div class="dialog-btns center"><button class="primary-btn" id="dz-ok">Confirm</button><button class="white-btn" id="dz-cancel">Cancel</button></div>
+    </div>
+  </div>
+  <div class="overlay" id="cal-view" hidden>
+    <div class="dialog cal-dialog" role="dialog" aria-modal="true">
+      <div class="dialog-head"><b>Calibration</b><span class="muted" id="cal-count"></span></div>
+      <p class="cal-hint">Press every key all the way down, one at a time, then release it. A key is done when it is marked.</p>
+      <div class="kbd cal-kbd" id="cal-kbd"></div>
+      <div class="dialog-btns center"><button class="primary-btn" id="cal-finish">Finish</button><button class="white-btn" id="cal-restart">Restart</button></div>
     </div>
   </div>
   <div class="overlay" id="confirm" hidden>

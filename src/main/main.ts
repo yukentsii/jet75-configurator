@@ -31,6 +31,8 @@ function handle(channel: string, fn: (...args: any[]) => Promise<unknown>) {
 
 handle('connect', async () => {
   const d = await device();
+  // like the vendor's app: make sure no calibration is left running
+  await d.calibration('stop').catch(() => undefined);
   return {
     info: await d.info(),
     profiles: await d.profiles(),
@@ -151,6 +153,23 @@ async function setTravel(on: boolean) {
   return on;
 }
 handle('setTravel', async (on: boolean) => setTravel(on));
+
+// Calibration forwards the same travel reports; the keyboard is always told to stop when the view closes or the app quits.
+let calibrating = false;
+handle('calibration', async (action: 'start' | 'stop' | 'restart') => {
+  const d = await device();
+  if (action !== 'stop') {
+    calibrating = true;
+    d.onTravel = (r) => BrowserWindow.getAllWindows()[0]?.webContents.send('travel', r);
+    d.startPump();
+  }
+  await d.calibration(action);
+  if (action === 'stop') {
+    calibrating = false;
+    if (!travelOn) { d.stopPump(); d.onTravel = null; }
+  }
+  return calibrating;
+});
 
 handle('restoreLayer', async (profile: number, layer: number) => (await device()).restoreLayer(profile, layer));
 handle('setKeyEntry', async (profile: number, layer: number, index: number, entry: number[]) =>
@@ -344,6 +363,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', async () => {
   // never leave debug mode on the keyboard
+  if (kb && calibrating) await kb.calibration('stop').catch(() => undefined);
   if (kb && travelOn) await setTravel(false).catch(() => undefined);
   await kb?.close().catch(() => undefined);
   app.quit();

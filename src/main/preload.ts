@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('jet75', {
   saveLights: call('saveLights'),
   pickGif: call('pickGif'),
   setTravel: call('setTravel'),
+  calibration: call('calibration'),
   onTravel: (fn: (r: unknown) => void) => ipcRenderer.on('travel', (_e, r) => fn(r)),
   presets: call('presets'),
   applyPreset: call('applyPreset'),
