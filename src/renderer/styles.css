@@ -106,8 +106,17 @@ html.dark .theme-toggle .thumb { transform: translateX(18px); }
 .profile:hover:not(:disabled) { background: var(--btn-secondary-hover); }
 .profile.active { border-color: var(--accent-line); color: var(--accent); }
 .profile.active::before { content: ""; position: absolute; left: 0; top: 0; border: 7px solid var(--accent); border-right-color: transparent; border-bottom-color: transparent; }
-.profile:disabled { color: var(--text-secondary); }
+.profile:disabled, .profile.disabled { color: var(--text-secondary); }
+.profile.disabled { cursor: default; }
+div.profile { cursor: pointer; user-select: none; }
+div.profile:hover:not(.disabled) { background: var(--btn-secondary-hover); }
+.profile.preset[draggable="true"] { cursor: grab; }
+.profile.dragging { opacity: .5; }
 .profile .ic { color: var(--text-primary); }
+.profile-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile .profile-more { width: 26px; height: 26px; margin-right: -6px; }
+.profile .profile-more .ic { width: 18px; height: 18px; stroke-width: 3.2; }
+.profile .rename { height: 28px; padding: 0 8px; font-size: 13px; flex: 1; min-width: 0; }
 .drop {
   display: grid; place-items: center; height: 40px; margin-top: 10px; font-size: 12px; color: var(--text-secondary);
   background: var(--btn-secondary-bg); border: 1px solid var(--border-card); border-radius: 8px;

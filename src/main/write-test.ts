@@ -20,11 +20,14 @@ async function main() {
     await kb.write(0x06, 0, block);
     check('lighting restored byte-for-byte', same(await kb.funcConfig(0), block));
 
-    // report rate
-    const r = await kb.setReportRate(0, 2);
-    check('report rate index 2 reads back', r.reportRateIndex === 2);
-    await kb.write(0x06, 0, block);
-    check('report rate restored', same(await kb.funcConfig(0), block));
+    // report rate, on a profile that is not active: changing the active profile's rate makes the keyboard reconnect
+    const pr = await kb.profiles();
+    const idle = [0, 1, 2, 3].find((p) => p !== pr.active)!;
+    const idleBlock = await kb.funcConfig(idle);
+    const r = await kb.setReportRate(idle, (idleBlock[4] & 0x0f) === 2 ? 3 : 2);
+    check('report rate index change reads back', r.reportRateIndex !== (idleBlock[4] & 0x0f));
+    await kb.write(0x06, 64 * idle, idleBlock);
+    check('report rate restored', same(await kb.funcConfig(idle), idleBlock));
 
     // key remap through TS layer (profile 1, layer 1, matrix #0)
     const before = (await kb.keymap(0, 0))[0];

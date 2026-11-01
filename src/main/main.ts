@@ -97,7 +97,10 @@ handle('applyPreset', async (profile: number, id: number) => {
   if (!def) throw new Error('unknown preset');
   const d = await device();
   await d.applyPreset(profile, await d.buildPreset(def));
+  return d.renameProfile(profile, def.name);
 });
+handle('profileNames', async () => (await device()).profileNames());
+handle('renameProfile', async (profile: number, name: string) => (await device()).renameProfile(profile, name));
 handle('macros', async () => (await device()).macros());
 handle('setMacros', async (macros: Macro[]) => (await device()).setMacros(macros));
 

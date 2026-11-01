@@ -1,7 +1,7 @@
 {
   "name": "jet75-configurator",
   "productName": "Jet 75 Configurator",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Open-source, offline configurator for the MCHOSE Jet 75 II keyboard. No account, no cloud, no telemetry.",
   "author": "yukentsii",

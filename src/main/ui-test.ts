@@ -87,7 +87,12 @@ export async function runUiTest(win: BrowserWindow, getDevice: () => Promise<Jet
   await wait(1500);
   check('ui actuation #0 -> 2.00 mm on keyboard', (await kb.triggers(profile))[0].actuation === 200);
 
-  // quick trigger switches on the selected key: rapid trigger on (mode 2), then quick trigger off (mode 0)
+  // quick trigger switches on the selected key: rapid trigger on (mode 2), then quick trigger off (mode 0).
+  // Rapid trigger only works while quick trigger is on, so turn that on first if this profile has it off.
+  if ((await kb.triggers(profile))[0].keyMode === 0) {
+    await click('#t-rt');
+    await wait(1000);
+  }
   await click('#t-rapid');
   await wait(1000);
   const rapid = (await kb.triggers(profile))[0].keyMode;
@@ -138,9 +143,22 @@ export async function runUiTest(win: BrowserWindow, getDevice: () => Promise<Jet
     ...[0, 1, 2, 3].map((layer): [number, number, number, number] => [0x08, 0x09, 512 * (4 * target + layer), 384]),
     [0x05, 0x06, 64 * target, 64], [0xa0, 0xa1, 1024 * target, 1024], [0xa2, 0xa3, 768 * target, 768],
     [0xa4, 0xa5, 256 * target, 256], [0xa6, 0xa7, 128 * target, 128],
+    // profile names, copied into every profile
+    ...[0, 1, 2, 3].map((p): [number, number, number, number] => [0xf1, 0xf2, 1024 * p + 336, 280]),
   ];
   const backup: number[][] = [];
   for (const [r, , off, size] of regions) backup.push(await kb.rawRegion(r, off, size));
+
+  // rename the target profile through its ⋮ button, then check the keyboard stored it
+  await click(`#profiles [data-profile="${target}"] .profile-more`);
+  await js(`(() => { const i = document.querySelector('#profiles .rename'); i.value = 'Renamed by test'; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); })()`);
+  await wait(1500);
+  const names = await kb.profileNames();
+  check('ui rename stored on keyboard and shown in sidebar', names[target] === 'Renamed by test' &&
+    String(await js(`document.querySelector('#profiles [data-profile="${target}"] .profile-name').textContent`)) === 'Renamed by test');
+
+  // Chromium only starts a real drag from a draggable element that is not a <button>
+  check('presets are draggable non-button elements', await js(`[...document.querySelectorAll('[data-preset]')].every((e) => e.tagName !== 'BUTTON' && e.draggable)`));
   await js(`(() => {
     const src = document.querySelector('[data-preset="${preset.id}"]');
     const dst = document.querySelector('#profiles [data-profile="${target}"]');
@@ -155,6 +173,7 @@ export async function runUiTest(win: BrowserWindow, getDevice: () => Promise<Jet
   const t = await kb.triggers(target);
   check(`ui preset ${preset.name} applied to profile ${target + 1} by drag`, presetAsked &&
     preset.triggers.every((p, i) => t[i].actuation === p.actuation && t[i].keyMode === p.keyMode));
+  check('preset name given to the profile', (await kb.profileNames())[target] === preset.name);
   for (let i = 0; i < regions.length; i++) await kb.writeRawRegion(regions[i][1], regions[i][2], backup[i]);
   let restored = true;
   for (let i = 0; i < regions.length; i++) {

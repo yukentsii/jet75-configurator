@@ -28,7 +28,7 @@ interface MtSlot { tap: KeyRef; hold: KeyRef }
 interface DksSlot { points: number[]; keys: { key: KeyRef; phases: number }[] }
 interface Advanced { dks: DksSlot[]; mt: MtSlot[]; tgl: KeyRef[] }
 type AdvKind = 'mt' | 'tgl' | 'dks';
-interface Preset { id: string; name: string; help: string }
+interface Preset { id: number; name: string; help: string }
 declare const jet75: Record<string, (...args: unknown[]) => Promise<Result<any>>>;
 
 // Physical position of each matrix index: [x, y, width] in key units, plus the HID usage it sends by default
@@ -162,7 +162,8 @@ const state = {
   advKind: 'mt' as AdvKind,
   advKey: -1,
   presets: [] as Preset[],
-  dragPreset: null as string | null,
+  dragPreset: null as number | null,
+  names: [] as string[],
   testPress: [] as string[],
   testRelease: [] as string[],
 };
@@ -307,54 +308,120 @@ function renderPhotoKeyboard() {
 
 // profiles sidebar
 
+// A name the keyboard's own app stores as a reference to a built-in configuration, e.g. 'EQ<official@-5:0>QE'.
+// Its number counts the vendor's list, which has one extra entry before the six configurations.
+function profileName(i: number): string {
+  const raw = state.names[i] ?? '';
+  const ref = /^EQ<official@-(\d+):\d+>QE$/.exec(raw);
+  if (ref) return state.presets.find((p) => p.id === Number(ref[1]) - 1)?.name ?? `Profile ${i + 1}`;
+  return raw || `Profile ${i + 1}`;
+}
+
 function renderProfiles() {
   const p = state.profiles!;
   const enabled = p.order.slice(0, p.count);
   $('profile-count').textContent = `(${p.count}/4)`;
   const item = (i: number) => {
-    const b = el('button', 'profile' + (i === p.active ? ' active' : '')) as HTMLButtonElement;
+    const b = el('div', 'profile' + (i === p.active ? ' active' : '')) as HTMLDivElement;
     b.dataset.profile = String(i);
-    b.append(el('span', '', `Profile ${i + 1}`), el('span', 'spacer'), icon('i-dots'));
-    b.disabled = !enabled.includes(i) || !state.writes.profile;
-    b.onclick = () => i !== p.active && switchProfile(i);
-    // drop target for official presets
-    b.ondragover = (e) => { if (state.dragPreset) { e.preventDefault(); b.classList.add('drop-target'); } };
+    b.setAttribute('role', 'button');
+    b.tabIndex = 0;
+    const label = el('span', 'profile-name', profileName(i));
+    const more = el('button', 'icon-btn profile-more') as HTMLButtonElement;
+    more.title = 'Rename';
+    more.setAttribute('aria-label', `Rename ${profileName(i)}`);
+    more.append(icon('i-dots'));
+    more.onclick = (e) => { e.stopPropagation(); startRename(b, label, i); };
+    b.append(label, el('span', 'spacer'), more);
+    const usable = enabled.includes(i) && state.writes.profile;
+    b.classList.toggle('disabled', !usable);
+    b.onclick = () => usable && i !== p.active && switchProfile(i);
+    b.onkeydown = (e) => { if (e.key === 'Enter' && e.target === b) b.click(); };
+    b.ondblclick = () => startRename(b, label, i);
+    // drop target for built-in configurations
+    b.ondragover = (e) => {
+      if (state.dragPreset == null) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+      b.classList.add('drop-target');
+    };
     b.ondragleave = () => b.classList.remove('drop-target');
     b.ondrop = (e) => {
       e.preventDefault();
       b.classList.remove('drop-target');
-      const id = state.dragPreset;
+      const id = state.dragPreset ?? Number(e.dataTransfer?.getData('text/plain'));
       state.dragPreset = null;
-      if (id) applyPreset(id, i);
+      if (Number.isInteger(id)) applyPreset(id, i);
     };
     return b;
   };
   $('profiles').replaceChildren(...enabled.map(item));
 }
 
-// official presets, bundled with the app
+function startRename(row: HTMLElement, label: HTMLElement, i: number) {
+  if (!state.writes.profile || row.querySelector('input')) return;
+  const input = el('input', 'input rename') as HTMLInputElement;
+  input.value = profileName(i);
+  input.maxLength = 40;
+  label.replaceWith(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = async (save: boolean) => {
+    if (done) return;
+    done = true;
+    const name = input.value.trim();
+    if (save && name !== profileName(i)) {
+      const names = await call<string[]>('renameProfile', i, name === `Profile ${i + 1}` ? '' : name);
+      if (names) { state.names = names; toast(`Renamed to ${name || `Profile ${i + 1}`}`); }
+    }
+    renderProfiles();
+  };
+  input.onkeydown = (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') finish(true);
+    if (e.key === 'Escape') finish(false);
+  };
+  input.onclick = (e) => e.stopPropagation();
+  input.onblur = () => finish(true);
+}
+
+// built-in configurations
 
 function renderPresets() {
   $('presets').replaceChildren(...state.presets.map((p) => {
-    const b = el('button', 'profile preset') as HTMLButtonElement;
-    b.dataset.preset = p.id;
-    b.draggable = true;
+    // a div, not a button: Chromium does not start drags from <button> elements
+    const b = el('div', 'profile preset') as HTMLDivElement;
+    b.dataset.preset = String(p.id);
+    b.setAttribute('role', 'button');
+    b.tabIndex = 0;
     b.title = p.help;
-    const info = icon('i-help', 'ic sm');
-    b.append(el('span', '', p.name), info, el('span', 'spacer'), icon('i-dots'));
-    b.disabled = !state.writes.keymap;
-    b.ondragstart = (e) => { state.dragPreset = p.id; e.dataTransfer?.setData('text/plain', p.id); };
-    b.ondragend = () => (state.dragPreset = null);
-    b.onclick = () => applyPreset(p.id, state.profile);
+    b.append(el('span', '', p.name), icon('i-help', 'ic sm'), el('span', 'spacer'), icon('i-dots'));
+    const usable = state.writes.keymap;
+    b.classList.toggle('disabled', !usable);
+    b.draggable = usable;
+    b.ondragstart = (e) => {
+      state.dragPreset = p.id;
+      if (e.dataTransfer) { e.dataTransfer.setData('text/plain', String(p.id)); e.dataTransfer.effectAllowed = 'copy'; }
+      b.classList.add('dragging');
+    };
+    b.ondragend = () => { state.dragPreset = null; b.classList.remove('dragging'); };
+    b.onclick = () => { if (usable) applyPreset(p.id, state.profile); };
+    b.onkeydown = (e) => { if (e.key === 'Enter') b.click(); };
     return b;
   }));
 }
 
-async function applyPreset(id: string, profile: number) {
-  const p = state.presets.find((x) => x.id === id)!;
-  if (!(await confirmDialog(`Apply ${p.name} to Profile ${profile + 1}? This replaces its keys, lighting and trigger settings.`, 'Apply'))) return;
-  if ((await call('applyPreset', profile, id)) === null) return;
-  toast(`${p.name} applied to Profile ${profile + 1}`);
+async function applyPreset(id: number, profile: number) {
+  const p = state.presets.find((x) => x.id === id);
+  if (!p) return;
+  const target = profileName(profile);
+  if (!(await confirmDialog(`Apply ${p.name} to ${target}? This replaces its keys, lighting and trigger settings.`, 'Apply'))) return;
+  const names = await call<string[]>('applyPreset', profile, id);
+  if (names === null) return;
+  state.names = names;
+  renderProfiles();
+  toast(`${p.name} applied to ${target}`);
   // the app shows the active profile; reload it when that is the one that changed
   if (profile === state.profile) {
     state.trigSel = new Set();
@@ -369,7 +436,7 @@ async function switchProfile(i: number) {
   state.profiles = p;
   state.profile = p.active;
   renderProfiles();
-  toast(`Profile ${p.active + 1} active`);
+  toast(`${profileName(p.active)} active`);
   await loadProfile();
 }
 
@@ -1074,6 +1141,8 @@ async function connect() {
   renderProfiles();
   const pr = await call<Preset[]>('presets');
   if (pr) { state.presets = pr; renderPresets(); }
+  const names = await call<string[]>('profileNames');
+  if (names) { state.names = names; renderProfiles(); }
   const m = await call<Macro[]>('macros');
   if (m) { state.macros = m; renderMacros(); }
   await loadProfile();

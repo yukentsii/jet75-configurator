@@ -24,6 +24,8 @@ export const Cmd = {
   getMacros: 0x0c,
   setMacros: 0x0d,
   setBase: 0x0e,
+  getCustom: 0xf1,
+  setCustom: 0xf2,
   getTrigger: 0xa0,
   setTrigger: 0xa1,
   getDks: 0xa2,
@@ -36,14 +38,14 @@ export const Cmd = {
 
 export const READ_CMDS = new Set<number>([
   Cmd.getInfo, Cmd.getBase, Cmd.getFuncConfig, Cmd.getDefaultKeyMatrix, Cmd.getKeyMatrix, Cmd.getMacros,
-  Cmd.getTrigger, Cmd.getDks, Cmd.getMt, Cmd.getTgl,
+  Cmd.getTrigger, Cmd.getDks, Cmd.getMt, Cmd.getTgl, Cmd.getCustom,
 ]);
 
 // Write commands that have been sent to the hardware and read back correctly.
 // Add a command here only after its first write has been verified on the keyboard.
 export const CONFIRMED_WRITES = new Set<number>([
   Cmd.setFuncConfig, Cmd.setKeyMatrix, Cmd.setBase, Cmd.setMacros,
-  Cmd.setTrigger, Cmd.setDks, Cmd.setMt, Cmd.setTgl,
+  Cmd.setTrigger, Cmd.setDks, Cmd.setMt, Cmd.setTgl, Cmd.setCustom,
 ]);
 
 // [0x55, cmd, 0, sum(bytes 4..) & 0xFF, len, offLo, offHi, 0, data...]
@@ -375,6 +377,31 @@ export interface Preset {
   triggers: Trigger[];
 }
 
-export const keymapOffset =(profile: number, layer: number) => KEY_AREA * (LAYERS * profile + layer);
+// Profile names: a JSON array of all names, UTF-8, padded with 0xFF, stored in each profile's custom data
+// area (1024 bytes per profile) at offset 336, 280 bytes long. Written to every profile at once.
+export const CUSTOM_SIZE = 1024;
+export const NAMES_OFFSET = 336;
+export const NAMES_SIZE = 280;
+
+export function decodeNames(d: number[]): string[] {
+  const end = d.indexOf(0xff);
+  try {
+    const v = JSON.parse(Buffer.from(d.slice(0, end < 0 ? d.length : end)).toString('utf8'));
+    return Array.isArray(v) ? v.map((s) => (typeof s === 'string' ? s : '')) : [];
+  } catch {
+    return [];
+  }
+}
+
+// Returns the bytes to write: the JSON rounded up to whole 56-byte packets.
+export function encodeNames(names: string[]): number[] {
+  const json = Array.from(Buffer.from(JSON.stringify(names), 'utf8'));
+  if (json.length > NAMES_SIZE) throw new Error('profile names are too long');
+  const out = new Array(NAMES_SIZE).fill(0xff);
+  json.forEach((b, i) => (out[i] = b));
+  return out.slice(0, Math.min(56 * Math.ceil((json.length + 1) / 56), NAMES_SIZE));
+}
+
+export const keymapOffset = (profile: number, layer: number) => KEY_AREA * (LAYERS * profile + layer);
 export const keyWriteOffset = (profile: number, layer: number, index: number) =>
   LAYERS * KEY_AREA * profile + KEY_AREA * layer + 3 * index;

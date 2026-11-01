@@ -22,4 +22,6 @@ contextBridge.exposeInMainWorld('jet75', {
   setKeyEntry: call('setKeyEntry'),
   presets: call('presets'),
   applyPreset: call('applyPreset'),
+  profileNames: call('profileNames'),
+  renameProfile: call('renameProfile'),
 });

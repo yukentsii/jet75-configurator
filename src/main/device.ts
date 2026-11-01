@@ -174,6 +174,23 @@ export class Jet75 {
     };
   }
 
+  async profileNames(): Promise<string[]> {
+    return P.decodeNames(await this.read(P.Cmd.getCustom, P.NAMES_OFFSET, P.NAMES_SIZE));
+  }
+
+  async setProfileNames(names: string[]) {
+    const bytes = P.encodeNames(names);
+    for (let p = 0; p < P.PROFILES; p++) await this.write(P.Cmd.setCustom, P.CUSTOM_SIZE * p + P.NAMES_OFFSET, bytes);
+    return this.profileNames();
+  }
+
+  async renameProfile(profile: number, name: string) {
+    const names = await this.profileNames();
+    while (names.length < P.PROFILES) names.push('');
+    names[profile] = name.trim();
+    return this.setProfileNames(names);
+  }
+
   async applyPreset(profile: number, preset: P.Preset) {
     for (let layer = 0; layer < P.LAYERS; layer++) {
       await this.write(P.Cmd.setKeyMatrix, P.keyWriteOffset(profile, layer, 0), preset.keys[layer].flat());
