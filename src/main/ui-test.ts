@@ -130,6 +130,73 @@ export async function runUiTest(win: BrowserWindow, getDevice: () => Promise<Jet
   check('keys restored', restoredKey.code2 === original.code2 && restoredKey.type === original.type &&
     restoredSpare.type === spare.type && restoredSpare.code1 === spare.code1 && restoredSpare.code2 === spare.code2);
   check('macro region restored', (await kb.macroRegion()).every((b, i) => b === region[i]));
+
+  const same = (a: number[], b: number[]) => a.length === b.length && a.every((v, i) => v === b[i]);
+  const keyArea = (layer: number) => 512 * (4 * profile + layer);
+
+  // Key Config lists: Media → Volume + on matrix #0
+  await click('[data-tab="keys"]');
+  await click('#layers [data-layer="0"]');
+  await wait(800);
+  await click('#kbd .key[data-index="0"]');
+  await click('[data-sub="media"]');
+  await click('.funcs .func[data-code="30e900"]');
+  await wait(800);
+  const vol = (await kb.keymap(profile, 0))[0];
+  check('ui media list: Volume + on #0', vol.type === 0x30 && vol.code1 === 0xe9 && vol.code2 === 0);
+  check('ui key cap names the entry', String(await js(`document.querySelector('#kbd .key[data-index="0"]').textContent`)) === 'Vol +');
+  await kb.setKeyEntry(profile, 0, 0, [original.type, original.code1, original.code2]);
+
+  // Restore defaults on Win Fn writes the factory map of that layer
+  const fnRaw = await kb.rawRegion(0x08, keyArea(1), 384);
+  await click('#layers [data-layer="1"]');
+  await wait(800);
+  await click('#restore-layer');
+  await click('#confirm-ok');
+  await wait(2500);
+  const factory = (await kb.defaultKeys(1)).flat();
+  check('ui restore defaults writes the factory Win Fn map', same(await kb.rawRegion(0x08, keyArea(1), 384), factory));
+  await kb.writeRawRegion(0x09, keyArea(1), fnRaw);
+  check('Win Fn layer restored byte-for-byte', same(await kb.rawRegion(0x08, keyArea(1), 384), fnRaw));
+  await click('#layers [data-layer="0"]');
+
+  // RS: A (#10) and D (#11) through Bind Key1 / Bind Key2
+  const mtRaw = await kb.rawRegion(0xa4, 256 * profile, 256);
+  const [a0, d0] = [(await kb.keymap(profile, 0))[10], (await kb.keymap(profile, 0))[11]];
+  await click('[data-tab="advanced"]');
+  await click('.adv-kind[data-kind="rs"]');
+  await click('#kbd .key[data-index="10"]');
+  await click('#kbd .key[data-index="11"]');
+  await click('#adv-save');
+  await wait(2000);
+  const [ra, rd] = [(await kb.keymap(profile, 0))[10], (await kb.keymap(profile, 0))[11]];
+  const rsSlot = ra.code1;
+  const mts = (await kb.advanced(profile)).mt;
+  check('ui RS pair stored as [0x93, s, partner]', ra.type === 0x93 && ra.code2 === 11 && rd.type === 0x93 && rd.code1 === rsSlot + 1 &&
+    rd.code2 === 10 && mts[rsSlot].tap.join() === '16,0,4' && mts[rsSlot].hold.join() === '16,0,7' && mts[rsSlot + 1].tap.join() === '16,0,7');
+  await kb.setKeyEntry(profile, 0, 10, [a0.type, a0.code1, a0.code2]);
+  await kb.setKeyEntry(profile, 0, 11, [d0.type, d0.code1, d0.code2]);
+  await kb.writeRawRegion(0xa5, 256 * profile, mtRaw);
+  check('RS keys and MT slots restored', same(await kb.rawRegion(0xa4, 256 * profile, 256), mtRaw) &&
+    (await kb.keymap(profile, 0))[10].code2 === a0.code2 && (await kb.keymap(profile, 0))[11].code2 === d0.code2);
+
+  // LOGO light effect and backlight direction
+  const funcRaw = await kb.funcConfig(profile);
+  await click('[data-tab="lighting"]');
+  await click('#light-zone [data-zone="logo"]');
+  const logoBefore = (await kb.lighting(profile)).sideEffect;
+  const logoEffect = logoBefore === 4 ? 9 : 4;
+  await click(`#effects [data-effect="${logoEffect}"]`);
+  await wait(1000);
+  const afterLogo = await kb.lighting(profile);
+  check(`ui LOGO light effect -> ${logoEffect} (backlight untouched)`, afterLogo.sideEffect === logoEffect && afterLogo.effect === funcRaw[8]);
+  await click('#light-zone [data-zone="back"]');
+  const dir = afterLogo.direction ? 0 : 1;
+  await click(`#direction [data-dir="${dir}"]`);
+  await wait(1000);
+  check(`ui direction -> ${dir ? 'Right to Left' : 'Left to Right'}`, (await kb.lighting(profile)).direction === dir);
+  await kb.writeRawRegion(0x06, 64 * profile, funcRaw);
+  check('lighting restored byte-for-byte', same(await kb.funcConfig(profile), funcRaw));
   // sidebar: rename through the ⋮ menu and dialog, then drag built-in configurations with real mouse input
   const base = await kb.profiles();
   const target = base.order.slice(0, base.count).find((p) => p !== base.active);
@@ -188,7 +255,8 @@ export async function runUiTest(win: BrowserWindow, getDevice: () => Promise<Jet
   const replaceAsked = String(await js(`document.getElementById('confirm-text').textContent`)).includes(fps.name) &&
     !(await js(`document.getElementById('confirm').hidden`));
   await click('#confirm-ok');
-  await wait(8000);
+  // applying a configuration takes a few seconds; wait until the name is written (last step), up to 20 s
+  for (let i = 0; i < 40 && (await kb.profileNames())[target] !== fps.name; i++) await wait(500);
   const t = await kb.triggers(target);
   check(`ui mouse drag of ${fps.name} onto a profile replaces it`, replaceAsked &&
     fps.triggers.every((p, i) => t[i].actuation === p.actuation && t[i].keyMode === p.keyMode) &&
