@@ -1,0 +1,71 @@
+{
+  "name": "jet75-configurator",
+  "productName": "Jet 75 Configurator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Open-source, offline configurator for the MCHOSE Jet 75 II keyboard. No account, no cloud, no telemetry.",
+  "author": "yukentsii",
+  "homepage": "https://github.com/yukentsii/jet75-configurator",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-static.js",
+    "start": "npm run build && electron .",
+    "check": "npm run build && node dist/main/cli-check.js",
+    "test:write": "npm run build && node dist/main/write-test.js",
+    "test:ui": "npm run build && node scripts/ui-test.js",
+    "dist": "npm run build && electron-builder --win"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "node-hid": "^3.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
+    "typescript": "5.6"
+  },
+  "allowScripts": {
+    "electron@33.4.11": true,
+    "node-hid": false
+  },
+  "build": {
+    "appId": "io.github.yukentsii.jet75configurator",
+    "productName": "Jet 75 Configurator",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Jet75-Configurator-Setup-${version}.exe"
+    },
+    "portable": {
+      "artifactName": "Jet75-Configurator-Portable-${version}.exe"
+    },
+    "npmRebuild": false,
+    "publish": null
+  }
+}
