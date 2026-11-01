@@ -121,6 +121,9 @@ export async function runUiTest(win: BrowserWindow, getDevice: () => Promise<Jet
     mt.tap.join() === '16,0,4' && mt.hold.join() === '16,2,0');
   await kb.setMt(profile, adv.mt);
   await kb.setKeyEntry(profile, 0, 79, [base79.type, base79.code1, base79.code2]);
+  // leave Advanced key so the app turns its debug mode (live travel) off before comparing
+  await click('[data-tab="lighting"]');
+  await wait(1000);
   check('performance, trigger and mod tap restored',
     JSON.stringify(await kb.performance(profile)) === JSON.stringify(perf) &&
     JSON.stringify((await kb.triggers(profile))[0]) === JSON.stringify(trig) &&
