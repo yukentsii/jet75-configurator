@@ -474,3 +474,40 @@ html.dark .overlay { background: rgba(0,0,0,.55); }
 /* RS key pickers */
 .rs-pick { justify-content: flex-start; width: 100%; padding: 0 12px; }
 .rs-pick b { margin-left: 4px; }
+
+/* Custom lighting: static schemes, GIFs and built-in effects */
+.custom-light, .music { display: grid; gap: 8px; }
+.sec-head { display: flex; align-items: center; gap: 6px; margin-top: 12px; font-size: 14px; font-weight: 600; }
+.text-btn.small { font-size: 13px; font-weight: 500; }
+.light-list { display: grid; gap: 6px; }
+.light-item {
+  display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 6px 0 12px; border: 1px solid transparent;
+  border-radius: 6px; background: var(--btn-secondary-bg); font-size: 13px; cursor: pointer;
+}
+.light-item:hover { border-color: var(--accent-line); }
+.light-item.on { border-color: var(--accent-line); background: var(--accent-soft); }
+.mini-btn { height: 24px; padding: 0 8px; border: 0; border-radius: 4px; background: var(--bg-card); font-size: 12px; }
+.paint-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+.spectrum { width: 100%; height: 96px; border-radius: 6px; background: var(--btn-secondary-bg); }
+.music-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.fill-btn.on { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line); }
+
+/* trigger: berserk tag, select switch dropdown, precision */
+.tag { margin-left: 6px; padding: 1px 6px; border-radius: 4px; background: var(--accent); color: var(--accent-text); font-size: 11px; font-weight: 500; vertical-align: 2px; }
+.dropdown { position: relative; flex: 1; }
+.dropdown .select-box { width: 100%; background: var(--bg-card); color: var(--text-primary); cursor: pointer; }
+.drop-menu {
+  position: absolute; z-index: 15; top: 44px; left: 0; right: 0; max-height: 280px; overflow-y: auto; padding: 8px;
+  background: var(--bg-card); border: 1px solid var(--border-card); border-radius: 8px; box-shadow: var(--shadow-lifted);
+}
+.search.sm { width: 100%; height: 32px; margin-bottom: 6px; }
+.drop-item { display: block; width: 100%; padding: 8px; border: 0; border-radius: 4px; background: none; text-align: left; font-size: 13px; }
+.drop-item:hover, .drop-item.on { background: var(--btn-secondary-bg); }
+.drop-item.on { font-weight: 600; }
+.prec { color: var(--text-secondary); }
+.prec.off { color: var(--text-muted); }
+.prec .radio { font-size: 12px; color: inherit; }
+
+/* dead zone popover sits over the keyboard without dimming the page */
+.overlay.clear { background: transparent; align-items: start; padding-top: 150px; }
+.dz-pop .dialog-head { margin-right: 0; }

@@ -23,6 +23,8 @@ export const Cmd = {
   getDefaultKeyMatrix: 0x07,
   getKeyMatrix: 0x08,
   setKeyMatrix: 0x09,
+  getKeyColors: 0x0a,
+  setKeyColors: 0x0b,
   getMacros: 0x0c,
   setMacros: 0x0d,
   setBase: 0x0e,
@@ -39,19 +41,24 @@ export const Cmd = {
   setMt: 0xa5,
   getTgl: 0xa6,
   setTgl: 0xa7,
+  // live lighting: 3 bytes RGB per key index; shown while frames keep coming, the saved effect returns ~3 s after the last
+  stream: 0xdd,
 } as const;
 
 export const READ_CMDS = new Set<number>([
   Cmd.getInfo, Cmd.getBase, Cmd.getFuncConfig, Cmd.getDefaultKeyMatrix, Cmd.getKeyMatrix, Cmd.getMacros,
-  Cmd.getTrigger, Cmd.getDks, Cmd.getMt, Cmd.getTgl, Cmd.getCustom,
+  Cmd.getTrigger, Cmd.getDks, Cmd.getMt, Cmd.getTgl, Cmd.getCustom, Cmd.getKeyColors,
 ]);
 
 // Write commands that have been sent to the hardware and read back correctly.
 // Add a command here only after its first write has been verified on the keyboard.
 export const CONFIRMED_WRITES = new Set<number>([
   Cmd.setFuncConfig, Cmd.setKeyMatrix, Cmd.setBase, Cmd.setMacros,
-  Cmd.setTrigger, Cmd.setDks, Cmd.setMt, Cmd.setTgl, Cmd.setCustom, Cmd.reset,
+  Cmd.setTrigger, Cmd.setDks, Cmd.setMt, Cmd.setTgl, Cmd.setCustom, Cmd.reset, Cmd.setKeyColors, Cmd.stream,
 ]);
+
+// Per-key colours of the Custom effect (effect 0): 512 bytes per profile, RGB per matrix index.
+export const KEY_COLORS_SIZE = 512;
 
 // [0x55, cmd, 0, sum(bytes 4..) & 0xFF, len, offLo, offHi, 0, data...]
 export function frame(cmd: number, offset: number, len: number, data: number[] = []): number[] {

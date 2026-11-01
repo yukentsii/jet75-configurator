@@ -315,6 +315,32 @@ export class Jet75 {
     return this.write(cmd, offset, bytes);
   }
 
+  // Per-key colours (effect 0), '#rrggbb' per matrix index 0..127.
+  async keyColors(profile: number): Promise<string[]> {
+    const d = await this.read(P.Cmd.getKeyColors, P.KEY_COLORS_SIZE * profile, 3 * P.KEY_COUNT);
+    return Array.from({ length: P.KEY_COUNT }, (_, i) =>
+      '#' + d.slice(3 * i, 3 * i + 3).map((v) => v.toString(16).padStart(2, '0')).join(''));
+  }
+
+  // Writes only the listed keys: runs of neighbouring keys go out as one write.
+  async setKeyColors(profile: number, entries: [number, string][]) {
+    const rgb = (c: string) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
+    const sorted = [...entries].sort((a, b) => a[0] - b[0]);
+    for (let i = 0; i < sorted.length;) {
+      let j = i;
+      while (j + 1 < sorted.length && sorted[j + 1][0] === sorted[j][0] + 1) j++;
+      const data = sorted.slice(i, j + 1).flatMap(([, c]) => rgb(c));
+      await this.write(P.Cmd.setKeyColors, P.KEY_COLORS_SIZE * profile + 3 * sorted[i][0], data);
+      i = j + 1;
+    }
+    return this.keyColors(profile);
+  }
+
+  // One live frame: 384 bytes, RGB per key index.
+  stream(frame: number[]) {
+    return this.write(P.Cmd.stream, 0, frame.slice(0, 3 * P.KEY_COUNT).map((b) => b & 0xff));
+  }
+
   macroRegion() {
     return this.read(P.Cmd.getMacros, 0, P.MACRO_READ_SIZE);
   }

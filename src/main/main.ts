@@ -1,4 +1,5 @@
-import { app, BrowserWindow, dialog, ipcMain, session } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, session } from 'electron';
+import { promises as fsp } from 'fs';
 import * as path from 'path';
 import { Jet75 } from './device';
 import { addCustom, cleanName, deleteCustom, getCustom, loadCustom, readConfigFile, renameCustom, writeConfigFile } from './custom';
@@ -89,6 +90,48 @@ handle('setAdvanced', async (profile: number, kind: 'dks' | 'mt' | 'tgl', slots:
   else await d.setTgl(profile, slots);
   return d.advanced(profile);
 });
+handle('keyColors', async (profile: number) => (await device()).keyColors(profile));
+handle('setKeyColors', async (profile: number, entries: [number, string][]) => (await device()).setKeyColors(profile, entries));
+
+// Live frames: a frame that arrives while the previous one is still being written is dropped, so the
+// keyboard always shows the newest frame and nothing queues up.
+let streaming = false;
+handle('streamFrame', async (frame: number[]) => {
+  if (streaming) return false;
+  streaming = true;
+  try {
+    await (await device()).stream(frame);
+    return true;
+  } finally {
+    streaming = false;
+  }
+});
+
+// Static lighting schemes and imported GIFs, kept on this PC next to the custom configs.
+const lightStore = () => path.join(app.getPath('userData'), 'lighting.json');
+interface LightStore { schemes: { id: string; name: string; colors: string[] }[]; gifs: { id: string; name: string; frames: string[][]; delays: number[] }[] }
+async function readLights(): Promise<LightStore> {
+  try {
+    const d = JSON.parse(await fsp.readFile(lightStore(), 'utf8'));
+    return { schemes: d.schemes ?? [], gifs: d.gifs ?? [] };
+  } catch {
+    return { schemes: [], gifs: [] };
+  }
+}
+async function writeLights(d: LightStore) {
+  await fsp.mkdir(path.dirname(lightStore()), { recursive: true });
+  await fsp.writeFile(lightStore() + '.tmp', JSON.stringify(d));
+  await fsp.rename(lightStore() + '.tmp', lightStore());
+  return d;
+}
+handle('lights', readLights);
+handle('saveLights', async (d: LightStore) => writeLights(d));
+handle('pickGif', async () => {
+  const r = await dialog.showOpenDialog({ filters: [{ name: 'GIF', extensions: ['gif'] }], properties: ['openFile'] });
+  if (r.canceled || !r.filePaths[0]) return null;
+  return { name: path.basename(r.filePaths[0], path.extname(r.filePaths[0])), bytes: Array.from(await fsp.readFile(r.filePaths[0])) };
+});
+
 handle('restoreLayer', async (profile: number, layer: number) => (await device()).restoreLayer(profile, layer));
 handle('setKeyEntry', async (profile: number, layer: number, index: number, entry: number[]) =>
   (await device()).setKeyEntry(profile, layer, index, entry));
@@ -218,6 +261,12 @@ handle('setMacros', async (macros: Macro[]) => (await device()).setMacros(macros
 app.whenReady().then(() => {
   // The app is fully offline: block every network request from the renderer.
   session.defaultSession.webRequest.onBeforeRequest((details, cb) => cb({ cancel: !details.url.startsWith('file:') }));
+  // Music rhythm: capture what the PC plays (system audio loopback, Windows), locally. The screen video that
+  // comes with it is not used.
+  session.defaultSession.setDisplayMediaRequestHandler(async (_req, cb) => {
+    const [screen] = await desktopCapturer.getSources({ types: ['screen'] });
+    cb({ video: screen, audio: 'loopback' });
+  });
 
   const win = new BrowserWindow({
     // Same viewport as the vendor screenshots; the layout is drawn at 1920 px wide and zoomed to fit.

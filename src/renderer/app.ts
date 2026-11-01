@@ -30,6 +30,7 @@ interface DksSlot { points: number[]; keys: { key: KeyRef; phases: number }[] }
 interface Advanced { dks: DksSlot[]; mt: MtSlot[]; tgl: KeyRef[] }
 type AdvKind = 'rs' | 'mt' | 'tgl' | 'dks';
 interface Preset { id: number; name: string; help: string }
+interface LightStore { schemes: { id: string; name: string; colors: string[] }[]; gifs: { id: string; name: string; frames: string[][]; delays: number[] }[] }
 declare const jet75: Record<string, (...args: unknown[]) => Promise<Result<any>>>;
 
 // Physical position of each matrix index: [x, y, width] in key units, plus the HID usage it sends by default
@@ -76,6 +77,10 @@ const EFFECTS: Record<number, [string, string]> = {
 // The vendor's grid order, row by row.
 const EFFECT_ORDER = [6, 7, 8, 9, 4, 1, 5, 3, 2, 11, 12, 10, 18, 19, 20, 21, 22, 14, 13, 15, 16, 17];
 const EFFECT_OFF = 255;
+// The LOGO light has its own short list (funcConfig byte 24); 3 is off.
+const LOGO_EFFECTS: [number, string, string][] = [[0, 'Rainbow Cycle', 'e-rainbow'], [1, 'Constant On', 'e-const'], [2, 'Breath', 'e-breath'], [3, 'Off', 'e-dot']];
+const LOGO_OFF = 3;
+const EFFECT_CUSTOM = 0;
 // The official app offers 3 onboard configs on this model.
 const MAX_ONBOARD = 3;
 // Stored rate index for each vendor option, verified by setting each option in the vendor app and reading it back.
@@ -144,6 +149,15 @@ const state = {
   tab: 'lighting',
   sub: 'basic',
   zone: 'back' as 'back' | 'logo',
+  lightMode: 'normal' as 'normal' | 'custom' | 'music',
+  keyColors: [] as string[], // per-key colours of the Custom effect
+  paintSel: new Set<number>(),
+  paint: '#ffffff',
+  lights: { schemes: [], gifs: [] } as LightStore,
+  scheme: 'default', // selected static lighting entry
+  playing: '', // name of the effect being streamed, '' when none
+  liveFrame: null as string[] | null,
+  showKbd: true,
   profile: 0,
   layer: 0,
   writes: { lighting: false, keymap: false, profile: false, macros: false },
@@ -309,7 +323,9 @@ function renderKeyboard() {
   const editing = state.tab === 'keys';
   const trig = state.tab === 'trigger';
   const adv = state.tab === 'advanced';
-  kbd.classList.toggle('pick', (editing && state.writes.keymap) || trig || adv);
+  const paint = state.tab === 'lighting' && state.zone === 'back' && state.lightMode === 'custom' && !state.playing;
+  const colours = state.tab === 'lighting' ? state.liveFrame ?? (paint ? state.keyColors : null) : null;
+  kbd.classList.toggle('pick', (editing && state.writes.keymap) || trig || adv || paint);
   sizeBoard(kbd);
   kbd.replaceChildren(...LAYOUT.map(([x, y, w, def], i) => {
     const b = el('button', 'key');
@@ -323,8 +339,17 @@ function renderKeyboard() {
       b.textContent = capLabel(def);
     }
     if (trig && state.trigView !== 'preview' && state.triggers[i]) b.append(el('span', 'v', triggerLabel(state.triggers[i])));
-    if (trig ? state.trigSel.has(i) : adv ? i === state.advKey || i === state.rsKey2 : i === state.selected) b.classList.add('sel');
+    if (colours?.[i]) {
+      b.style.background = colours[i];
+      b.style.color = luminance(colours[i]) > 0.55 ? '#111' : '#f4ebd7';
+    }
+    if (trig ? state.trigSel.has(i) : adv ? i === state.advKey || i === state.rsKey2 : paint ? state.paintSel.has(i) : i === state.selected) b.classList.add('sel');
     b.onclick = () => (editing ? selectKey(i) : trig ? toggleTrigKey(i) : adv ? selectAdvKey(i) : undefined);
+    // custom lighting: click or drag across keys to select them
+    if (paint) {
+      b.onpointerdown = (e) => { e.preventDefault(); paintDrag = !state.paintSel.has(i); togglePaint(i, paintDrag); };
+      b.onpointerenter = (e) => { if (e.buttons & 1 && paintDrag != null) togglePaint(i, paintDrag); };
+    }
     return b;
   }));
 
@@ -821,19 +846,34 @@ const DIRECTIONAL = new Set([1, 2, 6, 7, 11, 12, 18, 19]);
 function renderLighting() {
   const l = state.lighting!;
   const effect = zoneValue<number>('effect');
+  const logo = state.zone === 'logo';
+  const off = logo ? LOGO_OFF : EFFECT_OFF;
   document.querySelectorAll<HTMLButtonElement>('#light-zone button').forEach((b) => b.classList.toggle('on', b.dataset.zone === state.zone));
-  // an effect outside the vendor grid (custom, or an unknown value) gets its own button at the end
-  const ids = EFFECT_ORDER.includes(effect) || effect === EFFECT_OFF ? EFFECT_ORDER : [...EFFECT_ORDER, effect];
+  // Normal light / Custom / Music Rhythm belong to the backlight
+  $('light-modes').hidden = logo;
+  const mode = logo ? 'normal' : state.lightMode;
+  document.querySelectorAll<HTMLButtonElement>('#light-modes button').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
+  $('effects').hidden = mode !== 'normal';
+  $('custom-light').hidden = mode !== 'custom';
+  $('music').hidden = mode !== 'music';
+  $('speed-block').hidden = logo;
+  $('paint-row').hidden = mode !== 'custom';
+  $('paint-count').textContent = `${state.paintSel.size} key${state.paintSel.size === 1 ? '' : 's'} selected`;
+  if (mode === 'custom') renderCustomLighting();
+  const ids = logo ? LOGO_EFFECTS.map((e) => e[0])
+    // an effect outside the vendor grid (an unknown value) gets its own button at the end
+    : EFFECT_ORDER.includes(effect) || effect === EFFECT_OFF || effect === EFFECT_CUSTOM ? EFFECT_ORDER : [...EFFECT_ORDER, effect];
   $('effects').replaceChildren(...ids.map((id) => {
     const b = el('button', 'effect' + (id === effect ? ' on' : '')) as HTMLButtonElement;
-    const [name, ic] = EFFECTS[id] ?? [`Effect ${id}`, 'e-dot'];
+    const logoItem = LOGO_EFFECTS.find((e) => e[0] === id);
+    const [name, ic] = logo && logoItem ? [logoItem[1], logoItem[2]] : EFFECTS[id] ?? [`Effect ${id}`, 'e-dot'];
     b.append(icon(ic), el('span', '', name));
     b.dataset.effect = String(id);
     b.disabled = !state.writes.lighting;
     b.onclick = () => patchLighting(zonePatch('effect', id), name);
     return b;
   }));
-  $('light-on').classList.toggle('on', effect !== EFFECT_OFF);
+  $('light-on').classList.toggle('on', effect !== off);
   $<HTMLButtonElement>('light-on').disabled = !state.writes.lighting;
   $<HTMLInputElement>('speed').value = String(zoneValue<number>('speed'));
   $<HTMLInputElement>('brightness').value = String(zoneValue<number>('brightness'));
@@ -846,7 +886,7 @@ function renderLighting() {
   const customOff = zoneValue<boolean>('customColorDisabled');
   $('custom-color').classList.toggle('on', !customOff);
   $<HTMLButtonElement>('custom-color').disabled = !state.writes.lighting;
-  showColor(zoneValue<string>('color'));
+  showColor(mode === 'custom' ? state.paint : zoneValue<string>('color'));
   $('light-note').textContent = customOff ? 'Custom colour is off: the effect uses its own colours. Picking a colour turns it on.' : '';
 }
 
@@ -892,6 +932,8 @@ function pickColor(hex: string, keepHsv = false) {
   if (!/^#[0-9a-f]{6}$/i.test(hex)) return;
   hex = hex.toLowerCase();
   showColor(hex, keepHsv);
+  // in Custom mode the palette picks the paint colour; Apply writes it to the selected keys
+  if (state.zone === 'back' && state.lightMode === 'custom') { state.paint = hex; return; }
   clearTimeout(colorTimer);
   colorTimer = window.setTimeout(() => patchLighting(zonePatch('color', hex), 'Colour saved'), 300);
 }
@@ -929,8 +971,10 @@ function initLightingControls() {
   }));
   // The effects switch turns lighting off (value 255); turning it back on picks rainbow cycle.
   $('light-on').onclick = () => {
-    const off = zoneValue<number>('effect') !== EFFECT_OFF;
-    patchLighting(zonePatch('effect', off ? EFFECT_OFF : 1), off ? 'Lighting off' : 'Lighting on');
+    const logo = state.zone === 'logo';
+    const turnOff = zoneValue<number>('effect') !== (logo ? LOGO_OFF : EFFECT_OFF);
+    stopPlaying();
+    patchLighting(zonePatch('effect', turnOff ? (logo ? LOGO_OFF : EFFECT_OFF) : logo ? 0 : 1), turnOff ? 'Lighting off' : 'Lighting on');
   };
   $('custom-color').onclick = () => {
     const off = zoneValue<boolean>('customColorDisabled');
@@ -939,6 +983,7 @@ function initLightingControls() {
   document.querySelectorAll<HTMLButtonElement>('#light-zone button').forEach((b) => (b.onclick = () => {
     state.zone = b.dataset.zone as 'back' | 'logo';
     renderLighting();
+    renderKeyboard();
   }));
   document.querySelectorAll<HTMLButtonElement>('#direction button').forEach((b) => (b.onclick = () =>
     patchLighting({ direction: Number(b.dataset.dir) }, b.textContent!)));
@@ -950,6 +995,355 @@ function initLightingControls() {
     };
     input.onchange = () => patchLighting(zonePatch(id, Number(input.value)), `${id === 'speed' ? 'Speed' : 'Brightness'} ${input.value}`);
   }
+}
+
+// custom lighting (effect 0): per-key colours, saved schemes, GIFs and built-in animations
+
+let paintDrag: boolean | null = null;
+window.addEventListener('pointerup', () => (paintDrag = null));
+
+function luminance(hex: string) {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  return 0.299 * r + 0.587 * g + 0.114 * b;
+}
+
+function togglePaint(i: number, on: boolean) {
+  if (on) state.paintSel.add(i);
+  else state.paintSel.delete(i);
+  renderKeyboard();
+  $('paint-count').textContent = `${state.paintSel.size} key${state.paintSel.size === 1 ? '' : 's'} selected`;
+}
+
+const MAX_LIGHTS = 20;
+// "Default": a rainbow across the keyboard, left to right.
+const DEFAULT_SCHEME = LAYOUT.map(([x, , w]) => hsvToHex([((x + w / 2) / KBD_W) * 330, 1, 1]));
+
+function lightRow(name: string, on: boolean, onPick: () => void, onDelete?: () => void, playing = false) {
+  const row = el('div', 'light-item' + (on ? ' on' : ''));
+  row.append(el('span', '', name), el('span', 'spacer'));
+  if (playing) {
+    const stop = el('button', 'mini-btn', 'Stop');
+    stop.onclick = (e) => { e.stopPropagation(); stopPlaying(); };
+    row.append(stop);
+  }
+  if (onDelete) {
+    const del = el('button', 'mini-btn', 'Delete');
+    del.onclick = (e) => { e.stopPropagation(); onDelete(); };
+    row.append(del);
+  }
+  row.onclick = onPick;
+  return row;
+}
+
+function renderCustomLighting() {
+  const L = state.lights;
+  $('static-count').textContent = `(${L.schemes.length}/${MAX_LIGHTS})`;
+  $('gif-count').textContent = `(${L.gifs.length}/${MAX_LIGHTS})`;
+  $('static-list').replaceChildren(
+    lightRow('Default', state.scheme === 'default' && !state.playing, () => applyScheme('default', DEFAULT_SCHEME)),
+    ...L.schemes.map((sc) => lightRow(sc.name, state.scheme === sc.id && !state.playing, () => applyScheme(sc.id, sc.colors),
+      () => saveLights({ ...L, schemes: L.schemes.filter((x) => x.id !== sc.id) }))),
+  );
+  $('gif-list').replaceChildren(...L.gifs.map((g) => lightRow(g.name, state.playing === g.id, () => playGif(g),
+    () => saveLights({ ...L, gifs: L.gifs.filter((x) => x.id !== g.id) }), state.playing === g.id)));
+  $('official-list').replaceChildren(...OFFICIAL_EFFECTS.map(([id, name, fn]) =>
+    lightRow(name, state.playing === id, () => play(id, fn), undefined, state.playing === id)));
+}
+
+async function saveLights(d: LightStore) {
+  const r = await call<LightStore>('saveLights', d);
+  if (r) { state.lights = r; renderCustomLighting(); }
+}
+
+// Shows the Custom effect with these colours on every key.
+async function applyScheme(id: string, colors: string[]) {
+  stopPlaying();
+  if (state.lighting!.effect !== EFFECT_CUSTOM) await patchLighting({ effect: EFFECT_CUSTOM }, 'Custom lighting');
+  const r = await call<string[]>('setKeyColors', state.profile, colors.map((c, i): [number, string] => [i, c]));
+  if (!r) return;
+  state.keyColors = r;
+  state.scheme = id;
+  renderLighting();
+  renderKeyboard();
+}
+
+async function applyPaint() {
+  if (!state.paintSel.size) { toast('Select keys on the keyboard first'); return; }
+  if (state.lighting!.effect !== EFFECT_CUSTOM) await patchLighting({ effect: EFFECT_CUSTOM }, 'Custom lighting');
+  const entries = [...state.paintSel].map((i): [number, string] => [i, state.paint]);
+  const r = await call<string[]>('setKeyColors', state.profile, entries);
+  if (!r) return;
+  state.keyColors = r;
+  // a saved scheme follows the edits made while it is selected
+  const sc = state.lights.schemes.find((x) => x.id === state.scheme);
+  if (sc) await saveLights({ ...state.lights, schemes: state.lights.schemes.map((x) => (x === sc ? { ...x, colors: r.slice(0, LAYOUT.length) } : x)) });
+  state.paintSel = new Set();
+  toast(`Colour set on ${entries.length} key${entries.length === 1 ? '' : 's'}`);
+  renderLighting();
+  renderKeyboard();
+}
+
+async function addScheme() {
+  const L = state.lights;
+  if (L.schemes.length >= MAX_LIGHTS) { toast(`Up to ${MAX_LIGHTS} static lightings`); return; }
+  const id = `s${Date.now()}`;
+  const colors = (state.keyColors.length ? state.keyColors : DEFAULT_SCHEME).slice(0, LAYOUT.length);
+  await saveLights({ ...L, schemes: [...L.schemes, { id, name: `Static ${L.schemes.length + 1}`, colors }] });
+  await applyScheme(id, colors);
+}
+
+// live frames: a 72 × 28 canvas (4 px per key unit) is drawn, then sampled at every key's centre
+const GRID = 4;
+const frameCanvas = document.createElement('canvas');
+frameCanvas.width = Math.ceil(KBD_W * GRID);
+frameCanvas.height = Math.ceil(KBD_H * GRID);
+const fctx = frameCanvas.getContext('2d', { willReadFrequently: true })!;
+
+function sampleFrame(): string[] {
+  const img = fctx.getImageData(0, 0, frameCanvas.width, frameCanvas.height).data;
+  return LAYOUT.map(([x, y, w]) => {
+    const px = Math.min(frameCanvas.width - 1, Math.floor((x + w / 2) * GRID));
+    const py = Math.min(frameCanvas.height - 1, Math.floor((y + 0.5) * GRID));
+    const o = 4 * (py * frameCanvas.width + px);
+    return '#' + [img[o], img[o + 1], img[o + 2]].map((v) => v.toString(16).padStart(2, '0')).join('');
+  });
+}
+
+function sendFrame(colors: string[]) {
+  const bytes = new Array(3 * 128).fill(0);
+  colors.forEach((c, i) => [1, 3, 5].forEach((o, k) => (bytes[3 * i + k] = parseInt(c.slice(o, o + 2), 16))));
+  jet75.streamFrame(bytes);
+  state.liveFrame = colors;
+  if (state.tab === 'lighting' && (state.playing !== 'music' || music.showKbd)) renderKeyboard();
+}
+
+let playTimer = 0;
+// Streams frames from draw(t, dt) at 20 fps until stopped; the keyboard returns to its saved effect ~3 s later.
+function play(id: string, draw: (t: number) => void) {
+  stopPlaying();
+  state.playing = id;
+  const start = performance.now();
+  playTimer = window.setInterval(() => {
+    draw((performance.now() - start) / 1000);
+    sendFrame(sampleFrame());
+  }, 50);
+  renderLighting();
+}
+
+function stopPlaying() {
+  clearInterval(playTimer);
+  playTimer = 0;
+  stopMusic();
+  state.playing = '';
+  state.liveFrame = null;
+  if (state.tab === 'lighting') { renderLighting(); renderKeyboard(); }
+}
+
+function playGif(g: LightStore['gifs'][number]) {
+  const total = g.delays.reduce((a, b) => a + b, 0) || 1;
+  play(g.id, (t) => {
+    let ms = (t * 1000) % total;
+    let f = 0;
+    while (f < g.frames.length - 1 && ms >= g.delays[f]) ms -= g.delays[f++];
+    const frame = g.frames[f];
+    fctx.clearRect(0, 0, frameCanvas.width, frameCanvas.height);
+    LAYOUT.forEach(([x, y, w], i) => { fctx.fillStyle = frame[i]; fctx.fillRect(x * GRID, y * GRID, w * GRID, GRID); });
+  });
+}
+
+// GIF import: decode every frame (Chromium's ImageDecoder), scale it onto the keyboard and keep one colour per key.
+async function addGif() {
+  if (state.lights.gifs.length >= MAX_LIGHTS) { toast(`Up to ${MAX_LIGHTS} GIF effects`); return; }
+  const file = await call<{ name: string; bytes: number[] } | null>('pickGif');
+  if (!file) return;
+  const Decoder = (window as any).ImageDecoder;
+  const dec = new Decoder({ data: new Uint8Array(file.bytes), type: 'image/gif' });
+  await dec.tracks.ready;
+  const count = Math.min(240, dec.tracks.selectedTrack.frameCount);
+  const frames: string[][] = [];
+  const delays: number[] = [];
+  for (let i = 0; i < count; i++) {
+    const { image } = await dec.decode({ frameIndex: i });
+    fctx.clearRect(0, 0, frameCanvas.width, frameCanvas.height);
+    fctx.drawImage(image, 0, 0, frameCanvas.width, frameCanvas.height);
+    frames.push(sampleFrame());
+    delays.push(Math.max(20, Math.round((image.duration ?? 100000) / 1000)));
+    image.close();
+  }
+  dec.close();
+  const id = `g${Date.now()}`;
+  await saveLights({ ...state.lights, gifs: [...state.lights.gifs, { id, name: file.name.slice(0, 20), frames, delays }] });
+  toast(`${file.name}: ${frames.length} frames`);
+}
+
+// Built-in animations, drawn on the 18 × 7 key grid.
+function brickBreaker() {
+  const cols = 18;
+  let bricks = new Set<number>();
+  let ball = { x: 8, y: 5, dx: 0.35, dy: -0.3 };
+  const reset = () => { bricks = new Set(Array.from({ length: 3 * cols }, (_, i) => i)); ball = { x: 8, y: 5, dx: 0.35, dy: -0.3 }; };
+  reset();
+  return () => {
+    ball.x += ball.dx;
+    ball.y += ball.dy;
+    if (ball.x < 0 || ball.x > cols - 0.5) ball.dx = -ball.dx;
+    if (ball.y < 0) ball.dy = -ball.dy;
+    if (ball.y > 5.2) { ball.dy = -Math.abs(ball.dy); }
+    const cell = Math.floor(ball.y) * cols + Math.floor(ball.x);
+    if (ball.y < 3 && bricks.has(cell)) { bricks.delete(cell); ball.dy = -ball.dy; }
+    if (!bricks.size) reset();
+    fctx.fillStyle = '#000';
+    fctx.fillRect(0, 0, frameCanvas.width, frameCanvas.height);
+    bricks.forEach((b) => {
+      fctx.fillStyle = `hsl(${(b % cols) * 20}, 100%, 50%)`;
+      fctx.fillRect((b % cols) * GRID, Math.floor(b / cols) * 1.1 * GRID, GRID, GRID);
+    });
+    fctx.fillStyle = '#ffffff';
+    fctx.fillRect((ball.x - 2) * GRID, 5.72 * GRID, 4 * GRID, GRID); // paddle follows the ball
+    fctx.fillStyle = '#ffd400';
+    fctx.fillRect(Math.floor(ball.x) * GRID, Math.floor(ball.y) * 1.1 * GRID, GRID, GRID);
+  };
+}
+
+const DIGITS: Record<string, string[]> = {
+  3: ['111', '001', '111', '001', '111'], 2: ['111', '001', '111', '100', '111'], 1: ['010', '110', '010', '010', '111'],
+};
+function countdownFireworks() {
+  const bursts: { x: number; y: number; t0: number; hue: number }[] = [];
+  return (t: number) => {
+    const cycle = t % 9;
+    fctx.fillStyle = '#000';
+    fctx.fillRect(0, 0, frameCanvas.width, frameCanvas.height);
+    if (cycle < 3) {
+      const d = DIGITS[String(3 - Math.floor(cycle))];
+      fctx.fillStyle = `hsl(${Math.floor(cycle) * 120}, 100%, 55%)`;
+      d.forEach((row, r) => [...row].forEach((c, k) => { if (c === '1') fctx.fillRect((7 + k * 1.1) * GRID, (1.33 + r * 1.1) * GRID, 1.1 * GRID, 1.1 * GRID); }));
+      bursts.length = 0;
+      return;
+    }
+    if (Math.random() < 0.25) bursts.push({ x: Math.random() * KBD_W, y: 1 + Math.random() * 5, t0: t, hue: Math.random() * 360 });
+    for (const b of bursts) {
+      const age = t - b.t0;
+      if (age > 1.2) continue;
+      fctx.strokeStyle = `hsla(${b.hue}, 100%, 55%, ${1 - age / 1.2})`;
+      fctx.lineWidth = GRID * 0.9;
+      fctx.beginPath();
+      fctx.arc(b.x * GRID, b.y * GRID, age * 6 * GRID + 1, 0, Math.PI * 2);
+      fctx.stroke();
+    }
+  };
+}
+
+const OFFICIAL_EFFECTS: [string, string, (t: number) => void][] = [];
+function initOfficialEffects() {
+  OFFICIAL_EFFECTS.push(['brick', 'Brick Breaker', brickBreaker()], ['countdown', 'Countdown Fireworks', countdownFireworks()]);
+}
+
+// music rhythm: the PC's own audio (loopback), a spectrum per keyboard column
+
+const MUSIC_DEFAULTS = { zoomRhythm: 1, zoomKbd: 1, showRhythm: true, showKbd: true };
+const music = { ...MUSIC_DEFAULTS, stream: null as MediaStream | null, ctx: null as AudioContext | null };
+
+async function startMusic() {
+  stopPlaying();
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+  } catch {
+    toast('Sound capture was not allowed');
+    return;
+  }
+  stream.getVideoTracks().forEach((t) => t.stop());
+  if (!stream.getAudioTracks().length) { toast('No sound to capture'); return; }
+  const ctx = new AudioContext();
+  const an = ctx.createAnalyser();
+  an.fftSize = 512;
+  an.smoothingTimeConstant = 0.6;
+  ctx.createMediaStreamSource(stream).connect(an);
+  music.stream = stream;
+  music.ctx = ctx;
+  const bins = new Uint8Array(an.frequencyBinCount);
+  const cols = 18;
+  const spec = $<HTMLCanvasElement>('spectrum').getContext('2d')!;
+  play('music', () => {
+    an.getByteFrequencyData(bins);
+    // log-spaced bands, one per keyboard column
+    const levels = Array.from({ length: cols }, (_, c) => {
+      const lo = Math.floor(2 * Math.pow(bins.length / 2, c / cols));
+      const hi = Math.max(lo + 1, Math.floor(2 * Math.pow(bins.length / 2, (c + 1) / cols)));
+      let m = 0;
+      for (let i = lo; i < hi && i < bins.length; i++) m = Math.max(m, bins[i]);
+      return Math.min(1, (m / 255) * music.zoomRhythm);
+    });
+    fctx.fillStyle = '#000';
+    fctx.fillRect(0, 0, frameCanvas.width, frameCanvas.height);
+    levels.forEach((v, c) => {
+      const rows = Math.round(v * 6);
+      for (let r = 0; r < rows; r++) {
+        fctx.fillStyle = `hsl(${c * 20}, 100%, ${50 * music.zoomKbd}%)`;
+        fctx.fillRect(c * GRID * KBD_W / cols, (KBD_H - 1 - r * 1.1) * GRID, GRID * KBD_W / cols + 1, GRID);
+      }
+    });
+    if (music.showRhythm) {
+      spec.clearRect(0, 0, 320, 96);
+      levels.forEach((v, c) => { spec.fillStyle = getComputedStyle(document.body).color; spec.fillRect(c * 18, 96 - v * 96, 14, v * 96); });
+    }
+  });
+  state.playing = 'music';
+  renderMusic();
+}
+
+function stopMusic() {
+  music.stream?.getTracks().forEach((t) => t.stop());
+  music.ctx?.close();
+  music.stream = null;
+  music.ctx = null;
+}
+
+function renderMusic() {
+  $('music-start').textContent = state.playing === 'music' ? 'Stop' : 'Start';
+  $('spectrum').hidden = !music.showRhythm;
+  const label: Record<string, string> = {
+    zoomRhythm: `Zoom Rhythm ×${music.zoomRhythm}`, zoomKbd: `Zoom Keyboard ${Math.round(music.zoomKbd * 100)}%`,
+    showRhythm: 'Show Rhythm', showKbd: 'Show Kbd',
+  };
+  document.querySelectorAll<HTMLButtonElement>('[data-music]').forEach((b) => {
+    const k = b.dataset.music!;
+    b.textContent = label[k];
+    b.classList.toggle('on', k === 'showRhythm' ? music.showRhythm : k === 'showKbd' ? music.showKbd : false);
+  });
+}
+
+function initCustomLighting() {
+  initOfficialEffects();
+  document.querySelectorAll<HTMLButtonElement>('#light-modes button').forEach((b) => (b.onclick = async () => {
+    const mode = b.dataset.mode as typeof state.lightMode;
+    if (mode !== state.lightMode) stopPlaying();
+    state.lightMode = mode;
+    state.paintSel = new Set();
+    if (mode === 'custom') {
+      const c = await call<string[]>('keyColors', state.profile);
+      if (c) state.keyColors = c;
+      if (state.lighting!.effect !== EFFECT_CUSTOM) await patchLighting({ effect: EFFECT_CUSTOM }, 'Custom lighting');
+    }
+    renderLighting();
+    renderKeyboard();
+    renderMusic();
+  }));
+  $('paint-apply').onclick = applyPaint;
+  $('static-add').onclick = addScheme;
+  $('gif-add').onclick = addGif;
+  $('music-start').onclick = () => (state.playing === 'music' ? stopPlaying() : startMusic());
+  $('music-reset').onclick = () => { Object.assign(music, MUSIC_DEFAULTS); renderMusic(); };
+  document.querySelectorAll<HTMLButtonElement>('[data-music]').forEach((b) => (b.onclick = () => {
+    const k = b.dataset.music!;
+    if (k === 'zoomRhythm') music.zoomRhythm = music.zoomRhythm >= 3 ? 1 : music.zoomRhythm + 0.5;
+    if (k === 'zoomKbd') music.zoomKbd = music.zoomKbd <= 0.5 ? 1 : music.zoomKbd - 0.25;
+    if (k === 'showRhythm') music.showRhythm = !music.showRhythm;
+    if (k === 'showKbd') { music.showKbd = !music.showKbd; if (!music.showKbd) { state.liveFrame = null; renderKeyboard(); } }
+    renderMusic();
+  }));
+  renderMusic();
 }
 
 // performance
@@ -1023,11 +1417,17 @@ function confirmDialog(text: string, ok = 'Close'): Promise<boolean> {
 
 // trigger: select keys on the keyboard; every change is written to the selected keys at once
 
-const mm = (v: number) => (v / 100).toFixed(2);
+// 0.01 mm units; Berserk Mode's 0.005 mm steps show as halves
+const mm = (v: number) => (v / 100).toFixed(v % 1 ? 3 : 2);
 const WASD = [0x1a, 0x04, 0x16, 0x07];
-const FACTORY_TRIGGER: Partial<Trigger> = { keyMode: 1, actuation: 120, rtPress: 80, rtRelease: 80, pressDeadzone: 0, releaseDeadzone: 0 };
+const FACTORY_TRIGGER: Partial<Trigger> = { keyMode: 1, actuation: 120, rtPress: 80, rtRelease: 80, pressDeadzone: 0, releaseDeadzone: 0, pressPrecision: 0, releasePrecision: 0 };
+// Select Switch: trigger record byte 0 = 0xA0 | index
+const SWITCHES = ['Default Option', 'TTC Uranus Magnetic Switch-Standard', 'TTC Uranus Magnetic Switch-RGB eSports', 'TTC Magneto Switch',
+  'Ice Rhino Magnetic Switch', 'Star Hunt Magnetic Switch', 'Starburst Magnetic Switch', 'Kailh Magnetic God Switch',
+  'Ice Blue Magnetic Switch', 'Quicksilver Magnetic Switch'];
+const DEADZONE_DEFAULT = 15;
 const RANGE_FIELDS = ['rtPress', 'rtRelease', 'pressDeadzone', 'releaseDeadzone'] as const;
-const trigFields = { actuation: 120, rtPress: 80, rtRelease: 80, pressDeadzone: 0, releaseDeadzone: 0, keyMode: 1 };
+const trigFields = { actuation: 120, rtPress: 80, rtRelease: 80, pressDeadzone: 0, releaseDeadzone: 0, keyMode: 1, switchType: 0, pressPrecision: 0, releasePrecision: 0 };
 // The vendor's limits, in 0.01 mm.
 const ACTUATION_MIN = 9;
 const ACTUATION_MAX = 340;
@@ -1035,7 +1435,7 @@ const DEADZONE_FIELDS = new Set<string>(['pressDeadzone', 'releaseDeadzone']);
 
 function triggerLabel(t: Trigger): string {
   if (state.trigView === 'actuation') return mm(t.actuation);
-  if (state.trigView === 'rt') return mm(t.rtPress);
+  if (state.trigView === 'rt') return mm(t.pressPrecision ? t.rtPress / 2 : t.rtPress);
   return mm(t.pressDeadzone);
 }
 
@@ -1051,8 +1451,14 @@ function toggleTrigKey(i: number) {
 function loadTriggerFields(i: number) {
   const t = state.triggers[i];
   if (!t) return;
-  Object.assign(trigFields, { actuation: t.actuation, rtPress: t.rtPress, rtRelease: t.rtRelease, pressDeadzone: t.pressDeadzone, releaseDeadzone: t.releaseDeadzone, keyMode: t.keyMode });
-  state.separate = t.rtPress !== t.rtRelease;
+  // with 0.005 mm precision the keyboard stores RT distances in 0.005 mm units
+  const rtPress = t.pressPrecision ? t.rtPress / 2 : t.rtPress;
+  const rtRelease = t.releasePrecision ? t.rtRelease / 2 : t.rtRelease;
+  Object.assign(trigFields, {
+    actuation: t.actuation, rtPress, rtRelease, pressDeadzone: t.pressDeadzone, releaseDeadzone: t.releaseDeadzone,
+    keyMode: t.keyMode, switchType: t.switchType, pressPrecision: t.pressPrecision, releasePrecision: t.releasePrecision,
+  });
+  state.separate = rtPress !== rtRelease;
 }
 
 function renderTriggerPanel() {
@@ -1076,6 +1482,34 @@ function renderTriggerPanel() {
   $('t-rapid').classList.toggle('on', trigFields.keyMode === 2);
   $<HTMLButtonElement>('t-rapid').disabled = !n || trigFields.keyMode < 1;
   document.querySelectorAll<HTMLButtonElement>('#trig-views button').forEach((b) => b.classList.toggle('on', b.dataset.view === state.trigView));
+  $('sw-name').textContent = SWITCHES[trigFields.switchType] ?? `Switch ${trigFields.switchType}`;
+  const berserk = !!state.perf?.tachyon;
+  $('p-tachyon').classList.toggle('on', berserk);
+  $<HTMLButtonElement>('p-tachyon').disabled = !state.writes.lighting;
+  $('berserk-tag').hidden = !berserk;
+  for (const [id, f] of [['prec-press', 'pressPrecision'], ['prec-release', 'releasePrecision']] as const) {
+    $(id).classList.toggle('off', !berserk);
+    document.querySelectorAll<HTMLButtonElement>(`#${id} .radio`).forEach((b) => {
+      b.classList.toggle('on', Number(b.dataset.prec) === (trigFields[f] ? 1 : 0));
+      b.disabled = !berserk || !n;
+    });
+  }
+}
+
+// Converts the panel's 0.01 mm values to what the keyboard stores (0.005 mm units with Berserk precision).
+function devicePatch(patch: Partial<Trigger>): Partial<Trigger> {
+  const out: Partial<Trigger> = { ...patch };
+  const pp = patch.pressPrecision ?? trigFields.pressPrecision;
+  const rp = patch.releasePrecision ?? trigFields.releasePrecision;
+  if (patch.rtPress != null || patch.pressPrecision != null) {
+    out.rtPress = Math.round((patch.rtPress ?? trigFields.rtPress) * (pp ? 2 : 1));
+    out.pressPrecision = pp;
+  }
+  if (patch.rtRelease != null || patch.releasePrecision != null) {
+    out.rtRelease = Math.round((patch.rtRelease ?? trigFields.rtRelease) * (rp ? 2 : 1));
+    out.releasePrecision = rp;
+  }
+  return out;
 }
 
 let trigTimer = 0;
@@ -1084,7 +1518,7 @@ async function writeTriggers(patch: Partial<Trigger>) {
   renderTriggerPanel();
   const keys = [...state.trigSel].sort((a, b) => a - b);
   if (!keys.length) { toast('Select keys on the keyboard first'); return; }
-  const t = await call<Trigger[]>('setTriggers', state.profile, keys, patch);
+  const t = await call<Trigger[]>('setTriggers', state.profile, keys, devicePatch(patch));
   if (t) {
     state.triggers = t;
     renderKeyboard();
@@ -1093,7 +1527,7 @@ async function writeTriggers(patch: Partial<Trigger>) {
   }
 }
 
-const toUnits = (v: string) => Math.round(parseFloat(v) * 100);
+const toUnits = (v: string) => Math.round(parseFloat(v) * 200) / 2;
 
 function initTriggerControls() {
   const act = $<HTMLInputElement>('t-actuation');
@@ -1130,12 +1564,48 @@ function initTriggerControls() {
   $('t-separate').onclick = () => { state.separate = !state.separate; renderTriggerPanel(); };
   $('dz-toggle').onclick = () => {
     if (!state.trigSel.size) { toast('Select keys on the keyboard first'); return; }
+    // off when both zones are 0; switching on starts from the vendor's 0.15 mm
+    const on = trigFields.pressDeadzone > 0 || trigFields.releaseDeadzone > 0;
+    $('dz-on').classList.toggle('on', on);
+    if (!on) Object.assign(trigFields, { pressDeadzone: DEADZONE_DEFAULT, releaseDeadzone: DEADZONE_DEFAULT });
+    renderTriggerPanel();
     $('dz-dialog').hidden = false;
   };
+  $('dz-on').onclick = () => $('dz-on').classList.toggle('on');
   $('dz-ok').onclick = () => {
     $('dz-dialog').hidden = true;
-    writeTriggers({ pressDeadzone: trigFields.pressDeadzone, releaseDeadzone: trigFields.releaseDeadzone });
+    const on = $('dz-on').classList.contains('on');
+    writeTriggers({ pressDeadzone: on ? trigFields.pressDeadzone : 0, releaseDeadzone: on ? trigFields.releaseDeadzone : 0 });
   };
+  // Select Switch dropdown with search
+  const renderSwitches = () => {
+    const q = $<HTMLInputElement>('sw-search').value.trim().toLowerCase();
+    $('sw-list').replaceChildren(...SWITCHES.map((name, i) => {
+      const b = el('button', 'drop-item' + (i === trigFields.switchType ? ' on' : ''), name) as HTMLButtonElement;
+      b.dataset.switch = String(i);
+      b.hidden = !!q && !name.toLowerCase().includes(q);
+      b.onclick = () => { $('sw-menu').hidden = true; writeTriggers({ switchType: i }); };
+      return b;
+    }));
+  };
+  $('sw-btn').onclick = (e) => {
+    e.stopPropagation();
+    if (!state.trigSel.size) { toast('Select keys on the keyboard first'); return; }
+    $<HTMLInputElement>('sw-search').value = '';
+    renderSwitches();
+    $('sw-menu').hidden = !$('sw-menu').hidden;
+  };
+  $('sw-search').oninput = renderSwitches;
+  $('sw-menu').onclick = (e) => e.stopPropagation();
+  document.addEventListener('click', () => ($('sw-menu').hidden = true));
+  // Berserk Mode (funcConfig byte 7 bit 0) unlocks the 0.005 mm RT precision
+  $('p-tachyon').onclick = async () => {
+    const p = await call<Performance>('setPerformance', state.profile, { tachyon: !state.perf!.tachyon });
+    if (p) { state.perf = p; renderTriggerPanel(); toast(`Berserk Mode ${p.tachyon ? 'on' : 'off'}`); }
+  };
+  for (const [id, f] of [['prec-press', 'pressPrecision'], ['prec-release', 'releasePrecision']] as const) {
+    document.querySelectorAll<HTMLButtonElement>(`#${id} .radio`).forEach((b) => (b.onclick = () => writeTriggers({ [f]: Number(b.dataset.prec) })));
+  }
   $('dz-cancel').onclick = () => {
     $('dz-dialog').hidden = true;
     if (state.trigSel.size) loadTriggerFields(Math.min(...state.trigSel));
@@ -1671,7 +2141,16 @@ window.addEventListener('keyup', (e) => {
 
 async function loadProfile() {
   const l = await call<Lighting>('lighting', state.profile);
-  if (l) { state.lighting = l; renderLighting(); renderRates(); }
+  if (l) {
+    state.lighting = l;
+    if (l.effect === EFFECT_CUSTOM) state.lightMode = 'custom';
+    const c = await call<string[]>('keyColors', state.profile);
+    if (c) state.keyColors = c;
+    const lights = await call<LightStore>('lights');
+    if (lights) state.lights = lights;
+    renderLighting();
+    renderRates();
+  }
   const perf = await call<Performance>('performance', state.profile);
   if (perf) { state.perf = perf; renderPerformance(); }
   const t = await call<Trigger[]>('triggers', state.profile);
@@ -1726,6 +2205,7 @@ function initTheme() {
 
 initTheme();
 initLightingControls();
+initCustomLighting();
 initPerformanceControls();
 initTriggerControls();
 initSidebar();

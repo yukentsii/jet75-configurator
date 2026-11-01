@@ -133,12 +133,33 @@
         <div class="col">
           <div class="col-head">Lighting effects<span class="spacer"></span><button class="switch on" id="light-on" aria-label="lighting on"></button></div>
           <div class="seg" id="light-zone"><button data-zone="back" class="on">Backlight</button><button data-zone="logo">LOGO Light</button></div>
-          <div class="chips"><button class="on">Normal light</button></div>
+          <div class="chips" id="light-modes"><button data-mode="normal" class="on">Normal light</button><button data-mode="custom">Custom</button><button data-mode="music">Music Rhythm</button></div>
           <div class="effects" id="effects"></div>
+          <div class="custom-light" id="custom-light" hidden>
+            <div class="sec-head">Static Lighting <span class="muted" id="static-count"></span><span class="spacer"></span><button class="text-btn small" id="static-add"><svg class="ic"><use href="#i-plus"/></svg>add</button></div>
+            <div class="light-list" id="static-list"></div>
+            <div class="sec-head">GIF Effect <span class="muted" id="gif-count"></span><span class="spacer"></span><button class="text-btn small" id="gif-add"><svg class="ic"><use href="#i-plus"/></svg>add</button></div>
+            <div class="light-list" id="gif-list"></div>
+            <div class="sec-head">Official Effects</div>
+            <div class="light-list" id="official-list"></div>
+          </div>
+          <div class="music" id="music" hidden>
+            <div class="sec-head">Music Rhythm Control Panel</div>
+            <canvas class="spectrum" id="spectrum" width="320" height="96"></canvas>
+            <div class="music-btns">
+              <button class="fill-btn" id="music-start">Start</button>
+              <button class="fill-btn" data-music="zoomRhythm">Zoom Rhythm</button>
+              <button class="fill-btn" data-music="zoomKbd">Zoom Keyboard</button>
+              <button class="fill-btn" data-music="showRhythm">Show Rhythm</button>
+              <button class="fill-btn" data-music="showKbd">Show Kbd</button>
+              <button class="fill-btn" id="music-reset">Restore defaults</button>
+            </div>
+            <p class="note" id="music-note">Plays what your PC is playing on the keys. The audio stays on this PC.</p>
+          </div>
         </div>
         <div class="col">
           <div class="col-head">Speed and brightness</div>
-          <div class="slider-block">
+          <div class="slider-block" id="speed-block">
             <div class="lbl">speed</div>
             <div class="slider-row"><input type="range" class="range" id="speed" min="0" max="4" step="1"><span class="val" id="speed-v"></span></div>
           </div>
@@ -160,6 +181,7 @@
           <div class="hexrow"><b>Hex</b><input class="field-in" id="hex" maxlength="7"></div>
           <div class="hexrow"><b>RGB</b><input class="field-in" id="r"><input class="field-in" id="g"><input class="field-in" id="b"></div>
           <div class="swatches" id="swatches"></div>
+          <div class="paint-row" id="paint-row" hidden><span class="note" id="paint-count"></span><button class="primary-btn" id="paint-apply">Apply to selected keys</button></div>
           <p class="note" id="light-note"></p>
         </div>
       </section>
@@ -168,6 +190,16 @@
       <section class="panel cols3" data-panel="trigger" hidden>
         <div class="col">
           <div class="col-head two">Set Actuation Distance<small>Set actuation point for selected keys</small></div>
+          <div class="switch-row">
+            <span class="sel-lbl">Select<br>Switch</span>
+            <div class="dropdown" id="sw-drop">
+              <button class="select-box" id="sw-btn"><span class="tri"></span><span id="sw-name">Default Option</span><svg class="ic"><use href="#i-chev"/></svg></button>
+              <div class="drop-menu" id="sw-menu" hidden>
+                <label class="search sm"><svg class="ic"><use href="#i-search"/></svg><input id="sw-search" placeholder="Search"></label>
+                <div id="sw-list"></div>
+              </div>
+            </div>
+          </div>
           <div class="travel">
             <svg class="switch-art" viewBox="0 0 120 140" aria-hidden="true">
               <path d="M40 8h40v22H40zM48 8V2h24v6M30 30h60v14H30zM22 44h76v50H22zM34 94h52v14H34zM56 108v26M64 108v26"/>
@@ -181,7 +213,7 @@
           </div>
         </div>
         <div class="col">
-          <div class="col-head two rt-head"><span>Quick Trigger (RT)</span><small>Dynamically adjust the actuation point for instant <b>trigger and reset</b></small><button class="switch" id="t-rt" aria-label="quick trigger"></button></div>
+          <div class="col-head two rt-head"><span>Quick Trigger (RT) <span class="tag" id="berserk-tag" hidden>Berserk Mode Enabled</span></span><small>Dynamically adjust the actuation point for instant <b>trigger and reset</b></small><button class="switch" id="t-rt" aria-label="quick trigger"></button></div>
           <div class="rt-block">
             <div class="rt-lbl">Press Sensitivity (Trigger)</div>
             <div class="rt-row"><span>High</span><input type="range" class="range" id="t-rtPress" min="2" max="340" step="1"><input class="num-box" id="t-rtPress-n"><span>Low</span></div>
@@ -202,6 +234,9 @@
         <div class="col">
           <div class="col-head two">Advanced Settings<small>Customize key dead zone and sensitivity precision</small></div>
           <div class="opt-row line"><div><b>Dead Zone Settings</b><small id="dz-summary"></small></div><button class="text-btn" id="dz-toggle"><svg class="ic"><use href="#i-gear"/></svg>Set up</button></div>
+          <div class="opt-row"><div><b>Berserk Mode</b><small>Provides extreme sensitivity precision. For best stability, use high-performance switches and recalibrate after replacement.</small></div><button class="switch" id="p-tachyon" aria-label="berserk mode"></button></div>
+          <div class="prec" id="prec-press"><span>RT Press Precision</span><button class="radio" data-prec="0">0.01mm</button><button class="radio" data-prec="1">0.005mm</button></div>
+          <div class="prec" id="prec-release"><span>RT Release Precision</span><button class="radio" data-prec="0">0.01mm</button><button class="radio" data-prec="1">0.005mm</button></div>
           <p class="note" id="trig-count">No keys selected</p>
         </div>
       </section>
@@ -311,15 +346,15 @@
       </section>
     </main>
   </div>
-  <div class="overlay" id="dz-dialog" hidden>
-    <div class="dialog" role="dialog" aria-modal="true">
-      <div class="dialog-head"><b>Dead Zone Settings</b></div>
+  <div class="overlay clear" id="dz-dialog" hidden>
+    <div class="dialog dz-pop" role="dialog" aria-modal="true">
+      <div class="dialog-head"><b>Dead Zone Settings</b><button class="switch" id="dz-on" aria-label="dead zone"></button></div>
       <div class="rt-block">
-        <div class="lbl">Press dead zone</div>
+        <div class="lbl">Top Dead Zone</div>
         <div class="rt-row"><input type="range" class="range" id="t-pressDeadzone" min="0" max="127" step="1"><input class="num-box" id="t-pressDeadzone-n"><span>mm</span></div>
       </div>
       <div class="rt-block">
-        <div class="lbl">Release dead zone</div>
+        <div class="lbl">Bottom Dead Zone</div>
         <div class="rt-row"><input type="range" class="range" id="t-releaseDeadzone" min="0" max="127" step="1"><input class="num-box" id="t-releaseDeadzone-n"><span>mm</span></div>
       </div>
       <div class="dialog-btns center"><button class="primary-btn" id="dz-ok">Confirm</button><button class="white-btn" id="dz-cancel">Cancel</button></div>
