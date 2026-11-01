@@ -7,7 +7,10 @@ import { PRESETS } from './presets';
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function runUiTest(win: BrowserWindow, getDevice: () => Promise<Jet75>): Promise<string[]> {
-  const js = (code: string) => win.webContents.executeJavaScript(code);
+  // a failing script names itself and the checks done so far, so a broken selector is easy to find
+  const js = (code: string) => win.webContents.executeJavaScript(code).catch((err) => {
+    throw new Error(`${err.message} in: ${code.slice(0, 120)} | after: ${out.join('; ')}`);
+  });
   const out: string[] = [];
   const check = (name: string, ok: boolean) => out.push(`${ok ? 'pass' : 'FAIL'}  ${name}`);
   const key = (type: string, code: string) =>
@@ -185,7 +188,7 @@ export async function runUiTest(win: BrowserWindow, getDevice: () => Promise<Jet
   await click('[data-tab="lighting"]');
   await click('#light-zone [data-zone="logo"]');
   const logoBefore = (await kb.lighting(profile)).sideEffect;
-  const logoEffect = logoBefore === 4 ? 9 : 4;
+  const logoEffect = logoBefore === 2 ? 1 : 2;
   await click(`#effects [data-effect="${logoEffect}"]`);
   await wait(1000);
   const afterLogo = await kb.lighting(profile);
@@ -197,6 +200,53 @@ export async function runUiTest(win: BrowserWindow, getDevice: () => Promise<Jet
   check(`ui direction -> ${dir ? 'Right to Left' : 'Left to Right'}`, (await kb.lighting(profile)).direction === dir);
   await kb.writeRawRegion(0x06, 64 * profile, funcRaw);
   check('lighting restored byte-for-byte', same(await kb.funcConfig(profile), funcRaw));
+
+  // Custom lighting: paint matrix #0 red through the palette, then restore the colour block and the effect
+  const colorRaw = await kb.rawRegion(0x0a, 512 * profile, 384);
+  await click('[data-tab="lighting"]');
+  await click('#light-modes [data-mode="custom"]');
+  await wait(1500);
+  await js(`(() => { const k = document.querySelector('#kbd .key[data-index="0"]');
+    k.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, buttons: 1 })); window.dispatchEvent(new PointerEvent('pointerup')); })()`);
+  await js(`document.querySelector('#swatches .swatch').click()`);
+  await click('#paint-apply');
+  await wait(1500);
+  const painted = (await kb.keyColors(profile))[0];
+  check('ui custom lighting: #0 painted red, effect 0', painted === '#ff0000' && (await kb.lighting(profile)).effect === 0);
+  await kb.writeRawRegion(0x0b, 512 * profile, colorRaw);
+  await kb.writeRawRegion(0x06, 64 * profile, funcRaw);
+  check('key colours and effect restored byte-for-byte', same(await kb.rawRegion(0x0a, 512 * profile, 384), colorRaw) &&
+    same(await kb.funcConfig(profile), funcRaw));
+  await click('#light-modes [data-mode="normal"]');
+
+  // Trigger: Select Switch, Berserk precision and the dead zone popover on matrix #0
+  const trigRaw0 = await kb.rawRegion(0xa0, 1024 * profile, 8);
+  const perfRaw = await kb.funcConfig(profile);
+  await click('[data-tab="trigger"]');
+  await js(`document.querySelector('[data-sel="none"]').click()`);
+  await click('#kbd .key[data-index="0"]');
+  await click('#sw-btn');
+  await click('#sw-list [data-switch="3"]');
+  await wait(1000);
+  check('ui select switch -> TTC Magneto Switch (byte 0 = 0xA3)', (await kb.rawRegion(0xa0, 1024 * profile, 1))[0] === 0xa3);
+  if (!(await kb.performance(profile)).tachyon) await click('#p-tachyon');
+  await wait(1000);
+  await click('#prec-press [data-prec="1"]');
+  await wait(1000);
+  const tp = (await kb.triggers(profile))[0];
+  const shown = Number(await js(`document.getElementById('t-rtPress-n').value`));
+  check('ui berserk 0.005 mm press precision stores RT in half steps', (await kb.performance(profile)).tachyon &&
+    tp.pressPrecision === 1 && Math.abs(tp.rtPress / 200 - shown) < 1e-9);
+  await click('#dz-toggle');
+  if (!(await js(`document.getElementById('dz-on').classList.contains('on')`))) await click('#dz-on');
+  await click('#dz-ok');
+  await wait(1000);
+  const dz = (await kb.triggers(profile))[0];
+  check('ui dead zone popover writes 0.15 / 0.15 mm', dz.pressDeadzone === 15 && dz.releaseDeadzone === 15);
+  await kb.writeRawRegion(0xa1, 1024 * profile, trigRaw0);
+  await kb.writeRawRegion(0x06, 64 * profile, perfRaw);
+  check('trigger #0 and Berserk restored byte-for-byte', same(await kb.rawRegion(0xa0, 1024 * profile, 8), trigRaw0) &&
+    same(await kb.funcConfig(profile), perfRaw));
   // sidebar: rename through the ⋮ menu and dialog, then drag built-in configurations with real mouse input
   const base = await kb.profiles();
   const target = base.order.slice(0, base.count).find((p) => p !== base.active);
