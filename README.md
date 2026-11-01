@@ -33,12 +33,13 @@ Everything the official driver offers for the Jet 75 II, with the same layout:
 
 | Tab | What you can change |
 |---|---|
-| **Lighting** | 22 effects, brightness, speed, custom colour |
-| **Trigger** | per-key actuation distance, quick trigger (RT) press and release sensitivity, rapid trigger, dead zones |
-| **Key Config** | remap any key on 4 layers, key combos, 16 recorded macros |
-| **Advanced key** | Hold/Tap (MT) with hold time, Toggle (TGL), Dynamic Keystroke (DKS) |
+| **Lighting** | 22 backlight effects with speed, brightness, direction and colour; LOGO light; per-key custom colours and saved static schemes; GIF effects; built-in animated effects; music rhythm lighting from your PC audio |
+| **Trigger** | per-key actuation distance, switch type, quick trigger (RT) press/release sensitivity, rapid trigger, dead zones, Berserk mode (0.005 mm precision), live key-travel preview, switch calibration |
+| **Key Config** | remap any key on Win/Mac default and Fn layers: keyboard, mouse, media, lighting and 50 extended functions, key combos, 16 recorded macros, search, restore defaults |
+| **Advanced key** | RS, SOCD, Dynamic Keystroke (DKS), Hold/Tap (MT) with hold time, Toggle (TGL), live binding test |
 | **Performance** | polling rate 1k / 2k / 4k / 8k Hz, Win key lock, Mac mode, debounce, stability mode, adaptive calibration |
-| **Profiles** | switch between the 4 onboard profiles, rename or delete them from the ⋮ menu, drag one of the 6 built-in configurations onto a profile to replace it or onto "Drag config here" to add it (Beginner, FPS, Extreme, Office Work, MOBA Game, FPS Game) |
+| **Profiles** | 3 onboard configs: switch, rename, delete, export; custom configs saved on your PC; create and import configs; drag the 6 built-in configurations (Beginner, FPS, Extreme, Office Work, MOBA Game, FPS Game) onto the onboard list |
+| **Others** | firmware version, reset the current config, restore factory settings |
 
 Light and dark themes, with a toggle at the top right.
 
